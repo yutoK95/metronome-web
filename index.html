@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>しずくメトロノーム</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1219; color: #e6eef8;
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 260px; padding: 14px; border-radius: 14px;
+    background: rgba(18, 26, 38, 0.72); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.08);
+    display: flex; flex-direction: column; gap: 10px; user-select: none; }
+  #panel h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.05em; opacity: 0.85; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  button { font: inherit; color: inherit; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,0.16); }
+  #play { flex: 1; padding: 10px; font-size: 16px; font-weight: 600; background: #2f7fd8; border-color: #4a98f0; }
+  #play.on { background: #a8423d; border-color: #c95a54; }
+  .bpm { justify-content: space-between; }
+  #bpmVal { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 80px; text-align: center; }
+  .bpm small { opacity: 0.6; }
+  input[type=range] { width: 100%; accent-color: #4a98f0; }
+  label { font-size: 13px; opacity: 0.85; display: flex; flex-direction: column; gap: 4px; }
+  label .lab { display: flex; justify-content: space-between; }
+  select { font: inherit; color: inherit; background: #1d2838; border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; padding: 3px 6px; }
+  #dots { display: flex; gap: 6px; justify-content: center; min-height: 12px; }
+  #dots span { width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,0.15); transition: background 0.06s; }
+  #dots span.on { background: #7cc4ff; box-shadow: 0 0 8px #7cc4ff; }
+  #dots span.accent.on { background: #fff; box-shadow: 0 0 10px #bfe3ff; }
+  #status { font-size: 12px; opacity: 0.7; text-align: center; }
+  .hint { font-size: 11px; opacity: 0.5; text-align: center; }
+  #toggle { position: fixed; top: 12px; left: 12px; display: none; }
+  #panel.hidden { display: none; }
+  #panel.hidden + #toggle { display: block; }
+  @media (max-width: 600px) { #panel { width: calc(100% - 24px); } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="panel">
+  <div class="row" style="justify-content: space-between">
+    <h1>しずくメトロノーム</h1>
+    <button id="hide" title="パネルを隠す" style="padding: 2px 8px">–</button>
+  </div>
+  <div class="row bpm">
+    <button id="minus">−</button>
+    <div style="text-align:center"><div id="bpmVal">90</div><small>BPM</small></div>
+    <button id="plus">＋</button>
+  </div>
+  <input type="range" id="bpm" min="30" max="240" value="90">
+  <div class="row">
+    <button id="play">▶ スタート</button>
+    <button id="tap" title="T キー">タップ</button>
+  </div>
+  <div id="dots"></div>
+  <label><span class="lab">拍子
+    <select id="beats">
+      <option value="1">なし</option><option value="2">2拍</option><option value="3">3拍</option>
+      <option value="4" selected>4拍</option><option value="5">5拍</option><option value="6">6拍</option><option value="7">7拍</option>
+    </select></span></label>
+  <label><span class="lab">しずくの大きさ <span id="dropVal">5</span></span>
+    <input type="range" id="drop" min="1" max="12" value="5"></label>
+  <label><span class="lab">音量 <span id="volVal">70</span></span>
+    <input type="range" id="vol" min="0" max="100" value="70"></label>
+  <div class="row"><button id="reset" style="flex:1">グラスを空にする</button></div>
+  <div id="status">グラス 0%</div>
+  <div class="hint">Space: スタート/ストップ　↑↓: BPM　T: タップ</div>
+</div>
+<button id="toggle">☰</button>
+
+<script src="sim.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
