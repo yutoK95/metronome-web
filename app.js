@@ -3,8 +3,15 @@
 
   const H = 720;             // ワールドの高さ（幅は画面比率から決める）
   const STEP_HZ = 180;       // 物理のサブステップ / 秒
-  const SPAWN_Y = -12;       // 水滴の出現位置（画面上端の少し上）
-  const SPAWN_VY = 1.2;
+  const SPAWN_VY = 0.5;      // 水時計のノズルから離れるときの初速
+
+  // 水時計（ガラスの水槽 + 真鍮の金具）。ノズルの先で水滴がふくらみ、拍ごとに落ちる
+  const CLOCK = { top: 14, bot: 104, halfTop: 50, halfBot: 43, nozzleY: 142 };
+  const CLOCK_MINUTES = 30;  // 水槽の目盛りが一周する時間（分）
+  let playSec = 0;           // 再生していた合計時間 = 水時計の減った量
+  let lastSpawnT = 0, nextSpawnT = 0, ripple = 0;
+  // 先頭の粒子の出現位置。しずくの上端がノズルの先に来るようにする
+  const spawnY = () => CLOCK.nozzleY + 3 + 4.2 * (dropSize - 1);
   const MAX_PARTICLES = 2000;
   const FS = 0.7;            // 水描画用フィールドの解像度倍率
 
@@ -30,7 +37,7 @@
     tableRy = Math.round(rx * 0.12);
     table = { cx: W / 2, rx, x0: W / 2 - rx, x1: W / 2 + rx, top: DESK_Y, bottom: DESK_Y + TABLE_THICK };
     glass = FluidSim.makeGlass(W / 2, DESK_Y);
-    sim = new FluidSim.Sim({ W, H, floorY: FLOOR_Y, table, glass, cap: 4000, params: { killY: H + 10 } });
+    sim = new FluidSim.Sim({ W, H, floorY: FLOOR_Y, table, glass, cap: 4000, params: { killY: H + 10, topLimit: CLOCK.nozzleY + 40 } });
     bowlCapacity = glass.area / sim.areaPer;
     setupField();
     resize();
@@ -115,7 +122,7 @@
   const audioNow = () => actx.currentTime - (actx.outputLatency || actx.baseLatency || 0);
 
   function fallSeconds() {
-    return sim.predictFall(SPAWN_Y, SPAWN_VY, surfaceY() - 2) / STEP_HZ;
+    return sim.predictFall(spawnY(), SPAWN_VY, surfaceY() - 2) / STEP_HZ;
   }
 
   function fillQueue() {
@@ -171,16 +178,20 @@
     if (!actx) return;
     const now = audioNow();
     const surf = surfaceY();
-    const steps = sim.predictFall(SPAWN_Y, SPAWN_VY, surf - 2);
+    const y0 = spawnY();
+    const steps = sim.predictFall(y0, SPAWN_VY, surf - 2);
+    nextSpawnT = 0;
     for (const b of beats) {
       if (b.spawned) continue;
       const spawnT = b.time - steps / STEP_HZ;
-      if (now < spawnT) break;
+      if (now < spawnT) { nextSpawnT = spawnT; break; }
       b.spawned = true;
       if (now > b.time - 0.03) { b.skip = true; continue; }  // タブ非表示などで間に合わなかった拍
       const late = Math.round((now - spawnT) * STEP_HZ);
-      const st = sim.kinematic(SPAWN_Y, SPAWN_VY, late);
+      const st = sim.kinematic(y0, SPAWN_VY, late);
       sim.spawnDrop(glass.cx, st.y, dropSize, st.v);
+      lastSpawnT = now;
+      ripple = 1;
     }
   }
 
@@ -453,6 +464,148 @@
     drawGlassBack();
     drawWater();
     drawGlassFront();
+    drawClock();
+  }
+
+  // ---------- 水時計 ----------
+  function clockHalfAt(y) {
+    const { top, bot, halfTop, halfBot } = CLOCK;
+    return halfTop + (halfBot - halfTop) * Math.min(1, Math.max(0, (y - top) / (bot - top)));
+  }
+
+  function clockBodyPath() {
+    const { top, bot, halfTop, halfBot } = CLOCK, cx = glass.cx;
+    ctx.beginPath();
+    ctx.moveTo(cx - halfTop, top + 6);
+    ctx.lineTo(cx - halfBot, bot);
+    ctx.quadraticCurveTo(cx - halfBot, bot + 18, cx - 6, bot + 22);
+    ctx.lineTo(cx + 6, bot + 22);
+    ctx.quadraticCurveTo(cx + halfBot, bot + 18, cx + halfBot, bot);
+    ctx.lineTo(cx + halfTop, top + 6);
+    ctx.closePath();
+  }
+
+  function brassGrad(x0, x1) {
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, '#5a3d14'); g.addColorStop(0.3, '#e2bd68'); g.addColorStop(0.55, '#a9802f'); g.addColorStop(1, '#4a3210');
+    return g;
+  }
+
+  function drawClock() {
+    const { top, bot, halfTop, nozzleY } = CLOCK, cx = glass.cx;
+    const t = performance.now() / 1000;
+
+    // 吊り下げ金具
+    ctx.strokeStyle = '#8a6a30';
+    ctx.lineWidth = 2;
+    for (const sx of [-34, 34]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx * 0.6, -view.oy / view.s - 2);   // 画面の上端から吊るす
+      ctx.lineTo(cx + sx, top + 2);
+      ctx.stroke();
+    }
+
+    // 水槽の水（経過時間とともに水位が下がる）
+    const zeroY = top + 17;    // 目盛り0（満水）の位置
+    const usable = bot - zeroY;
+    const levelY = Math.min(bot + 15, zeroY + usable * playSec / (CLOCK_MINUTES * 60));
+    ctx.save();
+    clockBodyPath();
+    ctx.clip();
+    const wg = ctx.createLinearGradient(0, levelY, 0, bot + 22);
+    wg.addColorStop(0, 'rgba(110, 185, 245, 0.75)');
+    wg.addColorStop(1, 'rgba(40, 110, 200, 0.85)');
+    ctx.fillStyle = wg;
+    ctx.beginPath();
+    const hw = halfTop + 4;
+    ctx.moveTo(cx - hw, levelY);
+    for (let x = -hw; x <= hw; x += 4) {
+      ctx.lineTo(cx + x, levelY + Math.sin(x * 0.22 - t * 9) * ripple * 1.6);
+    }
+    ctx.lineTo(cx + hw, bot + 30);
+    ctx.lineTo(cx - hw, bot + 30);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(210, 238, 255, 0.8)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let x = -hw; x <= hw; x += 4) {
+      const yy = levelY + Math.sin(x * 0.22 - t * 9) * ripple * 1.6;
+      if (x === -hw) ctx.moveTo(cx + x, yy); else ctx.lineTo(cx + x, yy);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // ガラス
+    clockBodyPath();
+    ctx.fillStyle = 'rgba(200, 230, 255, 0.07)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(225, 240, 255, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - halfTop + 8, top + 14);
+    ctx.lineTo(cx - clockHalfAt(bot - 10) + 8, bot - 10);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // 目盛り（分）
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let k = 0; k <= 6; k++) {
+      const y = zeroY + usable * k / 6;
+      const x = cx + clockHalfAt(y);
+      ctx.strokeStyle = 'rgba(235, 215, 160, 0.75)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x - (k % 2 ? 6 : 11), y);
+      ctx.lineTo(x - 1, y);
+      ctx.stroke();
+      if (k % 2 === 0) {
+        ctx.fillStyle = 'rgba(235, 215, 160, 0.75)';
+        ctx.fillText(String(k * 5), x - 13, y);
+      }
+    }
+
+    // 真鍮の蓋・ノズル・コック
+    ctx.fillStyle = brassGrad(cx - halfTop - 6, cx + halfTop + 6);
+    ctx.fillRect(cx - halfTop - 6, top, (halfTop + 6) * 2, 9);
+    ctx.fillStyle = brassGrad(cx - 8, cx + 8);
+    ctx.fillRect(cx - 8, bot + 19, 16, 7);
+    ctx.fillStyle = brassGrad(cx - 4, cx + 4);
+    ctx.fillRect(cx - 3.5, bot + 26, 7, nozzleY - bot - 30);
+    ctx.fillStyle = brassGrad(cx - 5, cx + 5);
+    ctx.fillRect(cx - 5, nozzleY - 5, 10, 5);
+    ctx.fillStyle = brassGrad(cx + 3, cx + 19);
+    ctx.fillRect(cx + 3, bot + 31, 12, 4);
+    ctx.beginPath();
+    ctx.arc(cx + 17, bot + 33, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ノズルの先でふくらむ水滴（次に落ちるまでの進み具合で大きくなる）
+    let prog = 0.25;
+    if (running && actx && nextSpawnT > lastSpawnT) {
+      prog = Math.min(1, Math.max(0, (audioNow() - lastSpawnT) / (nextSpawnT - lastSpawnT)));
+    }
+    const r = (3 + dropSize * 0.55) * (0.3 + 0.7 * prog);
+    const dy = nozzleY + r * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(cx - 2.5, nozzleY);
+    ctx.quadraticCurveTo(cx - r * 0.5, nozzleY + r * 0.15, cx - r, dy);
+    ctx.arc(cx, dy, r, Math.PI, 0, true);
+    ctx.quadraticCurveTo(cx + r * 0.5, nozzleY + r * 0.15, cx + 2.5, nozzleY);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(100, 180, 245, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(210, 238, 255, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.35, dy - r * 0.3, Math.max(0.8, r * 0.18), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fill();
   }
 
   // ---------- UI ----------
@@ -491,7 +644,8 @@
       const fill = Math.min(100, Math.round(sim.countInBowl() / bowlCapacity * 100));
       text = fill >= 90 && sim.n - sim.countInBowl() > 30 ? 'あふれています' : `グラス ${fill}%`;
     }
-    $('status').textContent = text;
+    const m = Math.floor(playSec / 60), sec = Math.floor(playSec % 60);
+    $('status').textContent = `${text} ・ 経過 ${m}:${String(sec).padStart(2, '0')}`;
   }
 
   function setBpm(v) {
@@ -505,6 +659,7 @@
     ensureAudio();
     actx.resume();
     running = !running;
+    lastSpawnT = audioNow();
     $('play').textContent = running ? '■ ストップ' : '▶ スタート';
     $('play').classList.toggle('on', running);
     rescheduleFrom();
@@ -535,7 +690,7 @@
     $('volVal').textContent = e.target.value;
     if (master) master.gain.value = volume;
   };
-  $('reset').onclick = () => sim.reset();
+  $('reset').onclick = () => { sim.reset(); playSec = 0; };
   const panel = $('panel');
   function closePanel() {
     panel.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
@@ -600,7 +755,10 @@
   // ---------- メインループ ----------
   let last = performance.now(), acc = 0;
   function frame(ts) {
-    acc += Math.min(0.1, (ts - last) / 1000);
+    const dt = Math.min(0.1, (ts - last) / 1000);
+    acc += dt;
+    if (running) playSec += dt;
+    ripple *= 0.95;
     last = ts;
     let steps = 0;
     while (acc >= 1 / STEP_HZ && steps < 8) { sim.step(); acc -= 1 / STEP_HZ; steps++; }
@@ -621,10 +779,11 @@
   if (qs.has('prefill')) {   // 確認用: 指定秒数ぶん水滴を落とした状態から始める
     const per = Math.round(STEP_HZ * 60 / bpm);
     for (let s = 0; s < STEP_HZ * +qs.get('prefill'); s++) {
-      if (s % per === 0) sim.spawnDrop(glass.cx, SPAWN_Y, dropSize, SPAWN_VY);
+      if (s % per === 0) sim.spawnDrop(glass.cx, spawnY(), dropSize, SPAWN_VY);
       sim.step();
       if (s % 3 === 0) sim.manage(MAX_PARTICLES);
     }
+    playSec = +qs.get('prefill');
   }
   requestAnimationFrame(frame);
 })();
