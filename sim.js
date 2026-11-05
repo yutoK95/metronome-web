@@ -64,9 +64,10 @@
   }
 
   class Sim {
-    constructor({ W, H, deskY, glass, cap = 4000, params = {} }) {
+    // table: 丸テーブルの天板 { x0, x1, top, bottom }。天板の外にこぼれた水は床 (floorY) に落ちる
+    constructor({ W, H, floorY, table, glass, cap = 4000, params = {} }) {
       Object.assign(this, DEFAULTS, params);
-      this.W = W; this.H = H; this.deskY = deskY; this.glass = glass; this.cap = cap;
+      this.W = W; this.H = H; this.floorY = floorY; this.table = table; this.glass = glass; this.cap = cap;
       this.x = new Float32Array(cap); this.y = new Float32Array(cap);
       this.px = new Float32Array(cap); this.py = new Float32Array(cap);
       this.vx = new Float32Array(cap); this.vy = new Float32Array(cap);
@@ -76,6 +77,7 @@
       this.cnx = new Float32Array(cap); this.cny = new Float32Array(cap);  // 衝突面の法線
       this.rho = new Float32Array(cap);      // 描画用: 周りの混み具合
       this.onFloor = new Uint8Array(cap);    // 描画用: 床に接しているか
+      this.seed = new Float32Array(cap);     // 描画用: 粒子ごとの固定乱数
       this.yOff = 240;
       this.gw = Math.ceil(W / this.h) + 2;
       this.gh = Math.ceil((H + this.yOff) / this.h) + 2;
@@ -122,13 +124,13 @@
       }
     }
 
-    reset() { this.n = 0; this.baseY = this.deskY; }
+    reset() { this.n = 0; this.baseY = this.floorY; }
 
     add(x, y, vx, vy) {
       if (this.n >= this.cap) return;
       const i = this.n++;
       this.x[i] = x; this.y[i] = y; this.vx[i] = vx; this.vy[i] = vy;
-      this.rho[i] = 0; this.onFloor[i] = 0;
+      this.rho[i] = 0; this.onFloor[i] = 0; this.seed[i] = Math.random();
     }
 
     // 先頭（一番下）の粒子が (x, y) に来るように水滴を生成
@@ -277,19 +279,34 @@
       const { n, x, y, px, py, pr, W, glass } = this;
       const segs = glass.segs, bb = glass.bbox, m = pr + 6;
       const submerged = this.baseY <= glass.rimY + 6;
-      const poolActive = this.baseY < this.deskY - 0.5;
+      const tb = this.table, tableDry = this.baseY > tb.top;
 
       for (let i = 0; i < n; i++) {
         let xi = x[i], yi = y[i], cnx = 0, cny = 0;
 
-        // 床（机 or 溜まった水のプール）
-        let floor = this.deskY;
-        if (poolActive && (submerged || !glass.inBowl(xi, yi))) floor = this.baseY;
+        // 床（床 or 溜まった水のプール）。水没前のグラスの中はプールの影響を受けない
+        const floor = !submerged && glass.inBowl(xi, yi) ? this.floorY : this.baseY;
         this.onFloor[i] = yi > floor - pr - 1.5 ? 1 : 0;
         if (yi > floor - pr) {
           yi = floor - pr;
           xi = px[i] + (xi - px[i]) * 0.85;
           cny -= 1;
+        }
+
+        // テーブルの天板（箱）。めり込みが最も浅い面から押し出す
+        if (tableDry && xi > tb.x0 - pr && xi < tb.x1 + pr && yi > tb.top - pr && yi < tb.bottom + pr) {
+          const up = yi - (tb.top - pr), down = tb.bottom + pr - yi;
+          const left = xi - (tb.x0 - pr), right = tb.x1 + pr - xi;
+          const mn = Math.min(up, down, left, right);
+          if (mn === up) {
+            yi = tb.top - pr; cny -= 1;
+            xi = px[i] + (xi - px[i]) * 0.85;
+            this.onFloor[i] = 1;
+          } else if (mn === down) { yi = tb.bottom + pr; cny += 1; }
+          else if (mn === left) { xi = tb.x0 - pr; cnx -= 1; }
+          else { xi = tb.x1 + pr; cnx += 1; }
+        } else if (tableDry && xi > tb.x0 && xi < tb.x1 && yi > tb.top - pr - 1.5 && yi < tb.top) {
+          this.onFloor[i] = 1;
         }
         // 左右の壁
         if (xi < pr) xi = pr; else if (xi > W - pr) xi = W - pr;
@@ -340,7 +357,7 @@
       const { x, y, glass, mark } = this;
       const n = this.n;
       const submerged = this.baseY <= glass.rimY + 6;
-      const poolActive = this.baseY < this.deskY - 0.5;
+      const poolActive = this.baseY < this.floorY - 0.5;
       mark.fill(0, 0, n);
       let removed = 0;
 
@@ -367,7 +384,7 @@
         if (w !== i) {
           this.x[w] = this.x[i]; this.y[w] = this.y[i];
           this.vx[w] = this.vx[i]; this.vy[w] = this.vy[i];
-          this.rho[w] = this.rho[i]; this.onFloor[w] = this.onFloor[i];
+          this.rho[w] = this.rho[i]; this.onFloor[w] = this.onFloor[i]; this.seed[w] = this.seed[i];
         }
         w++;
       }

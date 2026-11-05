@@ -15,16 +15,22 @@
   // ---------- 状態 ----------
   let bpm = 90, beatsPerBar = 4, dropSize = 5, volume = 0.7;
   let running = false;
-  let W, glass, sim, bowlCapacity;
+  let W, glass, sim, table, bowlCapacity;
+  const DESK_Y = 430;        // テーブル天板の高さ
+  const TABLE_THICK = 14;    // 天板の厚み
+  const TABLE_RY = 30;       // 天板を斜め上から見た楕円の縦半径（見た目だけ）
+  const FLOOR_Y = 594;       // 床（水がたまる面）
+  const FLOOR_LINE = 535;    // 壁と床の境目（見た目だけ）
   const view = { s: 1, ox: 0, oy: 0, dpr: 1 };
 
   // ---------- ワールド ----------
   function initWorld() {
     const aspect = innerWidth / innerHeight;
     W = Math.round(Math.min(1400, Math.max(640, H * aspect)));
-    const deskY = H - 80;
-    glass = FluidSim.makeGlass(W / 2, deskY);
-    sim = new FluidSim.Sim({ W, H, deskY, glass, cap: 4000 });
+    const rx = Math.round(Math.min(260, W * 0.3));
+    table = { cx: W / 2, rx, x0: W / 2 - rx, x1: W / 2 + rx, top: DESK_Y, bottom: DESK_Y + TABLE_THICK };
+    glass = FluidSim.makeGlass(W / 2, DESK_Y);
+    sim = new FluidSim.Sim({ W, H, floorY: FLOOR_Y, table, glass, cap: 4000 });
     bowlCapacity = glass.area / sim.areaPer;
     setupField();
     resize();
@@ -36,7 +42,7 @@
     canvas.height = Math.round(innerHeight * view.dpr);
     view.s = Math.min(canvas.width / W, canvas.height / H);
     view.ox = (canvas.width - W * view.s) / 2;
-    view.oy = (canvas.height - H * view.s) / 2;
+    view.oy = canvas.height - H * view.s;   // 床が画面の下端に来るように下揃え
   }
   addEventListener('resize', resize);
 
@@ -228,10 +234,11 @@
     fCtx.globalCompositeOperation = 'source-over';
     fCtx.clearRect(0, 0, fw, fh);
     fCtx.globalCompositeOperation = 'lighter';
-    const { x, y, vx, vy, rho, onFloor, n } = sim;
+    const { x, y, vx, vy, rho, onFloor, seed, n } = sim;
     const rho0 = sim.rho0;
     for (let i = 0; i < n; i++) {
-      const cx = x[i] * FS, cy = y[i] * FS;
+      const cx = x[i] * FS;
+      let cy = y[i] * FS;
       if (cy < -2 * spriteR || cy > fh + spriteR) continue;
       // 周りに粒子が少ない（しぶき・水滴）ほど小さく描いて、ボール感を減らす
       const d = Math.min(1, rho[i] / rho0);
@@ -240,6 +247,15 @@
       if (onFloor[i]) {
         // 床の水は横に平たく伸ばして水たまりに見せる
         a = size * 2.0; b = size * 0.5;
+        // 奥行き方向にばらして、楕円の天板・床の上に広がる水たまりにする（見た目だけ）
+        const u = (x[i] - table.cx) / table.rx;
+        if (sim.baseY > DESK_Y && y[i] < DESK_Y && Math.abs(u) < 1) {
+          cy += (seed[i] * 2 - 1) * TABLE_RY * 0.8 * Math.sqrt(1 - u * u) * FS;
+          b = size * 0.8;
+        } else if (sim.baseY > FLOOR_Y - 2 && y[i] > DESK_Y + TABLE_THICK) {
+          cy -= seed[i] * 30 * FS;   // 床は奥（上）方向にだけ広げる
+          b = size * 0.8;
+        }
       } else {
         // 速く動く水滴は進行方向に少し伸ばす
         const sp = Math.hypot(vx[i], vy[i]);
@@ -253,9 +269,9 @@
       fCtx.drawImage(sprite, -spriteR, -spriteR);
     }
     fCtx.setTransform(1, 0, 0, 1, 0, 0);
-    if (sim.baseY < sim.deskY - 0.5) {
+    if (sim.baseY < sim.floorY - 0.5) {
       fCtx.fillStyle = '#fff';
-      fCtx.fillRect(0, sim.baseY * FS, fw, (sim.deskY - sim.baseY) * FS + 2);
+      fCtx.fillRect(0, sim.baseY * FS, fw, (H - sim.baseY) * FS + 2);
     }
 
     const src = fCtx.getImageData(0, 0, fw, fh).data;
@@ -365,20 +381,100 @@
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, cw, ch);
 
-    const dy = view.oy + glass.deskY * view.s;
-    const wood = ctx.createLinearGradient(0, dy, 0, ch);
-    wood.addColorStop(0, '#8a5530');
-    wood.addColorStop(0.08, '#6e4124');
-    wood.addColorStop(1, '#3a2213');
-    ctx.fillStyle = wood;
-    ctx.fillRect(0, dy, cw, ch - dy);
-    ctx.fillStyle = 'rgba(255, 210, 160, 0.25)';
-    ctx.fillRect(0, dy, cw, Math.max(1, 2 * view.s));
+    // 床
+    const fy = view.oy + FLOOR_LINE * view.s;
+    const fl = ctx.createLinearGradient(0, fy, 0, ch);
+    fl.addColorStop(0, '#2b241f');
+    fl.addColorStop(1, '#120e0b');
+    ctx.fillStyle = fl;
+    ctx.fillRect(0, fy, cw, ch - fy);
+    ctx.fillStyle = 'rgba(255, 220, 180, 0.08)';
+    ctx.fillRect(0, fy, cw, Math.max(1, 1.5 * view.s));
+  }
+
+  // 一本脚の丸テーブル（天板は斜め上から見た楕円）
+  function drawTable() {
+    const { cx, rx } = table;
+    const top = DESK_Y, bot = DESK_Y + TABLE_THICK;
+
+    // 床の影
+    const sh = ctx.createRadialGradient(cx, FLOOR_Y, 0, cx, FLOOR_Y, rx);
+    sh.addColorStop(0, 'rgba(0,0,0,0.45)');
+    sh.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save();
+    ctx.translate(cx, FLOOR_Y);
+    ctx.scale(1, 0.12);
+    ctx.translate(-cx, -FLOOR_Y);
+    ctx.fillStyle = sh;
+    ctx.beginPath();
+    ctx.arc(cx, FLOOR_Y, rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 脚の台座
+    ctx.beginPath();
+    ctx.ellipse(cx, FLOOR_Y - 2, 95, 13, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#2a1a0f';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx, FLOOR_Y - 7, 95, 13, 0, 0, Math.PI * 2);
+    const bg = ctx.createLinearGradient(cx - 95, 0, cx + 95, 0);
+    bg.addColorStop(0, '#4a2d19'); bg.addColorStop(0.4, '#7a4b2a'); bg.addColorStop(1, '#3a2313');
+    ctx.fillStyle = bg;
+    ctx.fill();
+
+    // 脚（柱）
+    const lg = ctx.createLinearGradient(cx - 16, 0, cx + 16, 0);
+    lg.addColorStop(0, '#3e2514'); lg.addColorStop(0.35, '#8a5732'); lg.addColorStop(1, '#2e1b0e');
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(cx - 13, bot + TABLE_RY - 6);
+    ctx.lineTo(cx - 13, FLOOR_Y - 40);
+    ctx.quadraticCurveTo(cx - 14, FLOOR_Y - 14, cx - 34, FLOOR_Y - 9);
+    ctx.lineTo(cx + 34, FLOOR_Y - 9);
+    ctx.quadraticCurveTo(cx + 14, FLOOR_Y - 14, cx + 13, FLOOR_Y - 40);
+    ctx.lineTo(cx + 13, bot + TABLE_RY - 6);
+    ctx.closePath();
+    ctx.fill();
+
+    // 天板の側面（手前側の厚み）
+    const eg = ctx.createLinearGradient(cx - rx, 0, cx + rx, 0);
+    eg.addColorStop(0, '#3a2213'); eg.addColorStop(0.35, '#6b3f22'); eg.addColorStop(1, '#2c190c');
+    ctx.fillStyle = eg;
+    ctx.beginPath();
+    ctx.ellipse(cx, top, rx, TABLE_RY, 0, Math.PI, 0, true);
+    ctx.lineTo(cx + rx, bot);
+    ctx.ellipse(cx, bot, rx, TABLE_RY, 0, 0, Math.PI, false);
+    ctx.closePath();
+    ctx.fill();
+
+    // 天板の上面
+    const tg = ctx.createRadialGradient(cx - rx * 0.3, top - TABLE_RY * 0.5, 0, cx, top, rx * 1.1);
+    tg.addColorStop(0, '#a8703f'); tg.addColorStop(0.6, '#8a5530'); tg.addColorStop(1, '#5e3519');
+    ctx.fillStyle = tg;
+    ctx.beginPath();
+    ctx.ellipse(cx, top, rx, TABLE_RY, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 木目
+    ctx.strokeStyle = 'rgba(60, 30, 10, 0.18)';
+    ctx.lineWidth = 1;
+    for (let k = 1; k <= 4; k++) {
+      ctx.beginPath();
+      ctx.ellipse(cx + 6 * k, top + 1, rx * (0.2 * k), TABLE_RY * (0.2 * k), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // 縁のハイライト
+    ctx.beginPath();
+    ctx.ellipse(cx, top, rx, TABLE_RY, 0, 0.05 * Math.PI, 0.95 * Math.PI);
+    ctx.strokeStyle = 'rgba(255, 215, 170, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
   }
 
   function draw() {
     drawBackground();
     ctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);
+    drawTable();
     drawGlassBack();
     drawWater();
     drawGlassFront();
@@ -415,7 +511,7 @@
     if (++statusTimer % 10) return;
     let text;
     if (sim.baseY <= glass.rimY + 6) text = 'グラスは水の底に…';
-    else if (sim.baseY < sim.deskY - 0.5) text = `あふれた水 ${Math.round(sim.deskY - sim.baseY)}mm`;
+    else if (sim.baseY < sim.floorY - 0.5) text = `床の水 ${Math.round(sim.floorY - sim.baseY)}mm`;
     else {
       const fill = Math.min(100, Math.round(sim.countInBowl() / bowlCapacity * 100));
       text = fill >= 90 && sim.n - sim.countInBowl() > 30 ? 'あふれています' : `グラス ${fill}%`;
@@ -465,7 +561,57 @@
     if (master) master.gain.value = volume;
   };
   $('reset').onclick = () => sim.reset();
-  $('hide').onclick = () => $('panel').classList.add('hidden');
+  const panel = $('panel');
+  function closePanel() {
+    panel.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+    panel.style.transform = 'translateX(-110%)';
+    panel.style.opacity = '0';
+    setTimeout(() => {
+      panel.classList.add('hidden');
+      panel.style.transition = panel.style.transform = panel.style.opacity = '';
+    }, 200);
+  }
+  $('hide').onclick = closePanel;
+
+  // 左へスワイプして閉じる（スライダー・セレクトの操作中は除く）
+  let swipe = null;
+  panel.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('input, select')) return;
+    swipe = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, active: false };
+  });
+  panel.addEventListener('pointermove', (e) => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    if (!swipe.active) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        swipe.active = true;
+        panel.setPointerCapture(e.pointerId);
+      } else if (Math.abs(dy) > 10) { swipe = null; return; }
+      else return;
+    }
+    swipe.dx = Math.min(0, dx);
+    panel.style.transition = 'none';
+    panel.style.transform = `translateX(${swipe.dx}px)`;
+    panel.style.opacity = String(Math.max(0.2, 1 + swipe.dx / 250));
+  });
+  const endSwipe = (e) => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const sw = swipe;
+    swipe = null;
+    if (!sw.active) return;
+    // スワイプ後に指を離した位置のボタンが押されないようにする
+    const block = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+    addEventListener('click', block, { capture: true, once: true });
+    setTimeout(() => removeEventListener('click', block, { capture: true }), 50);
+    if (sw.dx < -60) closePanel();
+    else {
+      panel.style.transition = 'transform 0.15s, opacity 0.15s';
+      panel.style.transform = '';
+      panel.style.opacity = '';
+    }
+  };
+  panel.addEventListener('pointerup', endSwipe);
+  panel.addEventListener('pointercancel', endSwipe);
   $('toggle').onclick = () => $('panel').classList.remove('hidden');
 
   addEventListener('keydown', (e) => {
