@@ -130,6 +130,26 @@
     };
   }
 
+  // n 個の粒子を六方格子で丸く詰めた配置。一番下の粒子が y = 0 になるようにずらす
+  const DROP_SPACING = 5.2;
+  const dropShapes = new Map();
+  function dropShape(n) {
+    if (dropShapes.has(n)) return dropShapes.get(n);
+    const pts = [];
+    for (let j = -4; j <= 4; j++) {
+      for (let i = -4; i <= 4; i++) {
+        pts.push([(i + (j & 1) * 0.5) * DROP_SPACING, j * DROP_SPACING * 0.866]);
+      }
+    }
+    // 中心に近い順に n 個（同じ距離なら下側を優先して、しずくらしく下がふくらむ形に）
+    pts.sort((a, b) => (Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1])) || (b[1] - a[1]));
+    const sel = pts.slice(0, n);
+    const bottom = Math.max(...sel.map((p) => p[1]));
+    const shape = sel.map(([px, py]) => [px, py - bottom]);
+    dropShapes.set(n, shape);
+    return shape;
+  }
+
   class Sim {
     // body: 水が当たる物体（輪郭の線分 segs と、器なら inBowl / rimY を持つ）
     // table: 台の天板 { x0, x1, top, bottom }（省略可）。天板の外にこぼれた水は床 (floorY) に落ちる
@@ -203,11 +223,13 @@
     }
 
     // 先頭（一番下）の粒子が (x, y) に来るように水滴を生成
+    // 着水したしずくを、粒子の丸い塊として水に加える
     spawnDrop(x, y, count, vy) {
-      for (let k = 0; k < count; k++) {
-        this.add(x + (Math.random() - 0.5) * 0.8, y - k * 4.2, 0, vy);
+      for (const [ox, oy] of dropShape(count)) {
+        this.add(x + ox + (Math.random() - 0.5) * 0.4, y + oy, 0, vy);
       }
     }
+
 
     // 自由落下の予測（step() と同じ積分）
     predictFall(y0, v0, targetY) {

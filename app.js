@@ -8,6 +8,8 @@
   const MAX_PARTICLES = 2000;
   const FS = 0.7;            // 水描画用フィールドの解像度倍率
   const SPAWN_VY = 0.5;      // しずくが離れるときの初速
+  // しずくの見た目の半径（大きさの設定 = 粒子数 から）。ふくらむしずく・落ちるしずくで共通
+  const dropRadius = (n) => 3 + 2.6 * Math.sqrt(n);
 
   const $ = (id) => document.getElementById(id);
 
@@ -63,6 +65,7 @@
     ctx, canvas, H, view,
     get W() { return W; },
     get dropSize() { return dropSize; },
+    get dropRadius() { return dropRadius(dropSize); },
     get running() { return running; },
     // 効果音用: 必要ならオーディオを用意して { ac, out, noise } を返す（ユーザー操作の中で呼ぶ）
     audio: () => {
@@ -82,6 +85,7 @@
     const cfg = scene.init(W);
     sim = new FluidSim.Sim({ W, H, floorY: cfg.floorY, table: cfg.table || null, body: cfg.body, cap: 4000, params: cfg.params || {} });
     scene.attach(sim);
+    falling = [];
     resize();
   }
 
@@ -165,11 +169,11 @@
   }
 
   // 水滴の「ポチャン」: 周波数が急上昇するサイン波（気泡の共鳴）+ 着水ノイズ
-  function playDrop(t, accent, pitch) {
+  function playDrop(t, accent, pitch, weight = 1) {
     const out = actx.createGain();
     out.connect(master);
     out.connect(reverbIn);
-    const amp = accent ? 0.9 : 0.5;
+    const amp = (accent ? 0.9 : 0.5) * weight;
     const f0 = pitch * (accent ? 1.2 : 1);
 
     const o = actx.createOscillator();
@@ -243,7 +247,7 @@
     const audible = actx && actx.state === 'running';
     for (const b of beats) {
       if (b.spawned && !b.sounded && !b.skip && b.time < t + 0.15) {
-        if (audible) playDrop(Math.max(toAudioTime(b.time), actx.currentTime), b.accent, scene.pitch());
+        if (audible) playDrop(Math.max(toAudioTime(b.time), actx.currentTime), b.accent, scene.pitch() * Math.pow(5 / dropSize, 0.4), 0.85 + 0.03 * dropSize);
         b.sounded = true;
       }
     }
@@ -253,7 +257,8 @@
   function processSpawns() {
     const t = now();
     const y0 = scene.spawnY();
-    const steps = sim.predictFall(y0, SPAWN_VY, surfaceY() - 2);
+    const target = surfaceY() - 2;
+    const steps = sim.predictFall(y0, SPAWN_VY, target);
     nextSpawnT = 0;
     for (const b of beats) {
       if (b.spawned) continue;
@@ -263,7 +268,7 @@
       if (t > b.time - 0.03) { b.skip = true; continue; }  // タブ非表示などで間に合わなかった拍
       const late = Math.round((t - spawnT) * STEP_HZ);
       const st = sim.kinematic(y0, SPAWN_VY, late);
-      sim.spawnDrop(scene.spawnX, st.y, dropSize, st.v);
+      launchDrop(scene.spawnX, st.y, st.v, dropSize, target);
       lastSpawnT = t;
     }
     // 着水の瞬間をシーンに知らせる（カエルが目を細める など）
@@ -272,6 +277,25 @@
         b.hit = true;
         dropCount++;
         scene.onHit(b);
+      }
+    }
+  }
+
+  // ---------- 落下中のしずく ----------
+  // 空中では 1 つの塊として動かし、着水した瞬間に粒子の水に変える。
+  // （粒子のまま落とすと、大きいしずくが途中でちぎれて複数のしずくになってしまう）
+  let falling = [];
+  function launchDrop(x, y, v, n, targetY) {
+    falling.push({ x, y, v, n, targetY });
+  }
+  function updateFalling() {
+    for (let k = falling.length - 1; k >= 0; k--) {
+      const d = falling[k];
+      d.v = Math.min(d.v + sim.g, sim.vmax);
+      d.y += d.v;
+      if (d.y >= d.targetY) {
+        sim.spawnDrop(d.x, d.y, d.n, d.v);
+        falling.splice(k, 1);
       }
     }
   }
@@ -365,6 +389,12 @@
         }
       }
       fCtx.setTransform(c * a, s * a, -s * b, c * b, cx, cy);
+      fCtx.drawImage(sprite, -spriteR, -spriteR);
+    }
+    // 落下中のしずく: 大きさに合わせた 1 つの塊。速いほど縦に少し伸びる（下端が先頭の位置）
+    for (const d of falling) {
+      const r = dropRadius(d.n), k = r / 6.9, st = 1 + Math.min(0.45, d.v * 0.1);
+      fCtx.setTransform(k / Math.sqrt(st), 0, 0, k * st, d.x * FS, (d.y - r * st - fieldTop) * FS);
       fCtx.drawImage(sprite, -spriteR, -spriteR);
     }
     fCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -485,7 +515,7 @@
     $('volVal').textContent = e.target.value;
     if (master) master.gain.value = volume;
   };
-  $('reset').onclick = () => { sim.reset(); scene.onReset(); playSec = 0; dropCount = 0; };
+  $('reset').onclick = () => { sim.reset(); falling = []; scene.onReset(); playSec = 0; dropCount = 0; };
   const panel = $('panel');
   function closePanel() {
     panel.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
@@ -551,6 +581,7 @@
   // ---------- メインループ ----------
   function physicsStep() {
     if (scene.substep) scene.substep(1 / STEP_HZ);
+    updateFalling();
     sim.step();
   }
 
@@ -583,11 +614,12 @@
   buildDots();
   if (qs.has('bpm')) setBpm(+qs.get('bpm'));
   if (qs.has('prog')) forcedProg = +qs.get('prog');
+  if (qs.has('drop')) { dropSize = +qs.get('drop'); $('drop').value = dropSize; $('dropVal').textContent = dropSize; }
   if (!qs.has('paused')) toggle();
   if (qs.has('prefill')) {   // 確認用: 指定秒数ぶんしずくを落とした状態から始める
     const per = Math.round(STEP_HZ * 60 / bpm);
     for (let s = 0; s < STEP_HZ * +qs.get('prefill'); s++) {
-      if (s % per === 0) sim.spawnDrop(scene.spawnX, scene.spawnY(), dropSize, SPAWN_VY);
+      if (s % per === 0) launchDrop(scene.spawnX, scene.spawnY(), SPAWN_VY, dropSize, surfaceY() - 2);
       physicsStep();
       if (s % 3 === 0) { sim.manage(MAX_PARTICLES); if (scene.afterPhysics) scene.afterPhysics(); }
     }

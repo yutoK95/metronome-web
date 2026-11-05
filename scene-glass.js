@@ -20,8 +20,9 @@
     const wobble = { angle: 0, vel: 0 };
 
     // ---------- 揺れの音 ----------
-    // 台座が木の天板とこすれる音（帯域を絞ったノイズ）と、中の水が揺れる音（共振させた低いノイズ）を
-    // ループさせておき、揺れの速さに合わせて音量を変える。揺れの折り返しでは台座が天板に当たる「コツ」を鳴らす。
+    // 台座が木の天板とこすれる音（帯域を絞ったノイズ）をループさせ、揺れの速さに合わせて音量を変える。
+    // 揺れの折り返しでは台座が天板に当たる「コツ」と、水が壁に寄って返る「チャプッ」を鳴らし、
+    // 揺れている間は水の中の小さな泡の音（短く上がる高さのサイン波）をぽつぽつ鳴らす。
     let snd = null;
     function setupSound() {
       if (snd) return snd;
@@ -34,15 +35,41 @@
       const scrape = ac.createGain(); scrape.gain.value = 0;
       scrapeSrc.connect(hp).connect(bp).connect(scrape).connect(out);
 
-      const sloshSrc = mk();
-      const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500; lp.Q.value = 7;
-      const slosh = ac.createGain(); slosh.gain.value = 0;
-      sloshSrc.connect(lp).connect(slosh).connect(out);
-
       scrapeSrc.start();
-      sloshSrc.start(ac.currentTime + 0.37);   // 2本のループの位相をずらす
-      snd = { ac, out, scrape, bp, slosh, lp, srcs: [scrapeSrc, sloshSrc] };
+      snd = { ac, out, noise, scrape, bp, srcs: [scrapeSrc] };
       return snd;
+    }
+
+    // 水の中の泡がはじける「ポコッ」（しずくの音を小さく・低く・短くしたもの）
+    function bubble(gain) {
+      const { ac, out } = snd, t = ac.currentTime + Math.random() * 0.03;
+      const f0 = 260 + Math.random() * 520, dur = 0.035 + Math.random() * 0.04;
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f0 * (1.5 + Math.random() * 0.6), t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(gain, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.03);
+      o.connect(g).connect(out);
+      o.start(t); o.stop(t + dur + 0.05);
+    }
+
+    // 水が壁に寄って返る「チャプッ」: 低くこもった短い水音 + 泡いくつか
+    function splash(strength) {
+      const { ac, out, noise } = snd, t = ac.currentTime;
+      const src = ac.createBufferSource();
+      src.buffer = noise;
+      const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 3;
+      lp.frequency.setValueAtTime(900, t);
+      lp.frequency.exponentialRampToValueAtTime(260, t + 0.16);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.35 * strength, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+      src.connect(lp).connect(g).connect(out);
+      src.start(t, Math.random() * 1.5, 0.25);
+      const n = 2 + Math.floor(strength * 3);
+      for (let k = 0; k < n; k++) setTimeout(() => snd && bubble(0.06 * strength), k * 40);
     }
 
     // 台座が天板に当たる「コツ」（木の低い音 + ガラスの高い響き）
@@ -70,16 +97,20 @@
     let lastVelSign = 0, fillCache = 0, fillTimer = 0;
     function updateSound(dt) {
       if (!snd) return;
-      const { ac, scrape, bp, slosh, lp } = snd, t = ac.currentTime;
+      const { ac, scrape, bp } = snd, t = ac.currentTime;
       const v = Math.abs(wobble.vel), a = Math.abs(wobble.angle);
       if ((fillTimer -= dt) <= 0) { fillTimer = 0.2; fillCache = Math.min(1, sim.countInBowl() / bowlCapacity); }
       scrape.gain.setTargetAtTime(Math.min(0.22, v * 0.16), t, 0.03);
       bp.frequency.setTargetAtTime(1300 + v * 700, t, 0.05);
-      slosh.gain.setTargetAtTime(Math.min(0.6, v * 0.45 * (0.15 + fillCache)), t, 0.08);
-      lp.frequency.setTargetAtTime(280 + 900 * Math.min(1, a / 0.12), t, 0.04);
-      // 揺れの折り返し（速度の向きが変わる瞬間）で「コツ」
+      // 揺れている間の泡（水が多いほど・速いほど多く）
+      if (fillCache > 0.05 && Math.random() < v * fillCache * dt * 14) bubble(Math.min(0.1, 0.03 + v * 0.04));
+      // 揺れの折り返し（速度の向きが変わる瞬間）で「コツ」と「チャプッ」
       const sign = Math.sign(wobble.vel);
-      if (sign && lastVelSign && sign !== lastVelSign && a > 0.015) knock(Math.min(1, a / 0.1));
+      if (sign && lastVelSign && sign !== lastVelSign && a > 0.015) {
+        const strength = Math.min(1, a / 0.1);
+        knock(strength);
+        if (fillCache > 0.05) splash(strength * Math.min(1, 0.3 + fillCache));
+      }
       if (sign) lastVelSign = sign;
     }
 
@@ -129,7 +160,7 @@
     // 天井の平らな面から、薄い水の膜 → ふくらみ → くびれ → 重みで落ちる直前、と育つしずく
     function drawCeilingDrop(prog) {
       const cx = glass.cx, c0 = ceilY();
-      const rmax = 3 + app.dropSize * 0.55;
+      const rmax = app.dropRadius;
       ctx.beginPath();
       if (prog < 0.45) {
         // 膜が少しずつ盛り上がる
@@ -334,8 +365,7 @@
       get spawnX() { return glass.cx; },
       // しずくが離れる瞬間の先頭（一番下）の粒子の位置
       spawnY() {
-        const rmax = 3 + app.dropSize * 0.55, c = ceilY();
-        return Math.max(c + rmax * 3.3, c + 2 + 4.2 * (app.dropSize - 1));
+        return ceilY() + app.dropRadius * 3.4;
       },
       surfaceRange() { return [ceilY() + 60, H]; },
       defaultSurface() { return glass.bottomY - sim.pr - 1.5; },
@@ -377,7 +407,7 @@
       dispose() {
         if (!snd) return;
         for (const s of snd.srcs) { try { s.stop(); } catch (e) { /* 停止済み */ } }
-        snd.scrape.disconnect(); snd.slosh.disconnect();
+        snd.scrape.disconnect();
         snd = null;
       },
       drawBack() {

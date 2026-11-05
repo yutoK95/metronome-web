@@ -263,7 +263,7 @@
 
       // 葉先でふくらむしずく（次に落ちるまでの進み具合で大きくなる）
       const [tx, ty] = leafTip();
-      const r = (3 + app.dropSize * 0.55) * (0.3 + 0.7 * prog);
+      const r = app.dropRadius * (0.3 + 0.7 * prog);
       const dy = ty + r * 0.95;
       ctx.beginPath();
       ctx.moveTo(tx - 2, ty);
@@ -497,7 +497,7 @@
 
       get spawnX() { return frog.cx; },
       // 先頭の粒子の出現位置。しずくの上端が葉先に来るようにする
-      spawnY() { return LEAF_TIP_Y + 3 + 4.2 * (app.dropSize - 1); },
+      spawnY() { return LEAF_TIP_Y + app.dropRadius * 1.95; },
       surfaceRange() { return [LEAF_TIP_Y + 40, frog.headTopY + 10]; },
       defaultSurface() { return frog.headTopY - sim.pr - 3; },
 
