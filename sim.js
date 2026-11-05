@@ -14,6 +14,7 @@
     visc: 0.15,   // 粘性
     areaPer: 42,  // 1粒子あたりの面積（プールに変換するときの水位計算用）
     topLimit: 70, // プールの水位上限（画面上端からの距離）
+    killY: Infinity, // これより下（画面外）に落ちた粒子はすぐプールに変換する
   };
 
   // ワイングラスの形状。y は下向き。
@@ -365,6 +366,9 @@
         for (let i = 0; i < n; i++) {
           if (y[i] > this.baseY + this.pr && (submerged || !glass.inBowl(x[i], y[i]))) { mark[i] = 1; removed++; }
         }
+      }
+      for (let i = 0; i < n; i++) {
+        if (!mark[i] && y[i] > this.killY) { mark[i] = 1; removed++; }
       }
       const excess = n - removed - maxN;
       if (excess > 0) {
