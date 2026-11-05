@@ -19,6 +19,70 @@
     let W, glass, table, tableRy, sim, bowlCapacity;
     const wobble = { angle: 0, vel: 0 };
 
+    // ---------- 揺れの音 ----------
+    // 台座が木の天板とこすれる音（帯域を絞ったノイズ）と、中の水が揺れる音（共振させた低いノイズ）を
+    // ループさせておき、揺れの速さに合わせて音量を変える。揺れの折り返しでは台座が天板に当たる「コツ」を鳴らす。
+    let snd = null;
+    function setupSound() {
+      if (snd) return snd;
+      const { ac, out, noise } = app.audio();
+      const mk = () => { const s = ac.createBufferSource(); s.buffer = noise; s.loop = true; return s; };
+
+      const scrapeSrc = mk();
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 600;
+      const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1700; bp.Q.value = 1.4;
+      const scrape = ac.createGain(); scrape.gain.value = 0;
+      scrapeSrc.connect(hp).connect(bp).connect(scrape).connect(out);
+
+      const sloshSrc = mk();
+      const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500; lp.Q.value = 7;
+      const slosh = ac.createGain(); slosh.gain.value = 0;
+      sloshSrc.connect(lp).connect(slosh).connect(out);
+
+      scrapeSrc.start();
+      sloshSrc.start(ac.currentTime + 0.37);   // 2本のループの位相をずらす
+      snd = { ac, out, scrape, bp, slosh, lp, srcs: [scrapeSrc, sloshSrc] };
+      return snd;
+    }
+
+    // 台座が天板に当たる「コツ」（木の低い音 + ガラスの高い響き）
+    function knock(strength) {
+      if (!snd) return;
+      const { ac, out } = snd, t = ac.currentTime;
+      const wood = ac.createOscillator(), wg = ac.createGain();
+      wood.frequency.setValueAtTime(240, t);
+      wood.frequency.exponentialRampToValueAtTime(130, t + 0.06);
+      wg.gain.setValueAtTime(0.0001, t);
+      wg.gain.exponentialRampToValueAtTime(0.5 * strength, t + 0.003);
+      wg.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      wood.connect(wg).connect(out);
+      wood.start(t); wood.stop(t + 0.1);
+
+      const gl = ac.createOscillator(), gg = ac.createGain();
+      gl.frequency.value = 3150 + Math.random() * 300;
+      gg.gain.setValueAtTime(0.0001, t);
+      gg.gain.exponentialRampToValueAtTime(0.12 * strength, t + 0.002);
+      gg.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      gl.connect(gg).connect(out);
+      gl.start(t); gl.stop(t + 0.2);
+    }
+
+    let lastVelSign = 0, fillCache = 0, fillTimer = 0;
+    function updateSound(dt) {
+      if (!snd) return;
+      const { ac, scrape, bp, slosh, lp } = snd, t = ac.currentTime;
+      const v = Math.abs(wobble.vel), a = Math.abs(wobble.angle);
+      if ((fillTimer -= dt) <= 0) { fillTimer = 0.2; fillCache = Math.min(1, sim.countInBowl() / bowlCapacity); }
+      scrape.gain.setTargetAtTime(Math.min(0.22, v * 0.16), t, 0.03);
+      bp.frequency.setTargetAtTime(1300 + v * 700, t, 0.05);
+      slosh.gain.setTargetAtTime(Math.min(0.6, v * 0.45 * (0.15 + fillCache)), t, 0.08);
+      lp.frequency.setTargetAtTime(280 + 900 * Math.min(1, a / 0.12), t, 0.04);
+      // 揺れの折り返し（速度の向きが変わる瞬間）で「コツ」
+      const sign = Math.sign(wobble.vel);
+      if (sign && lastVelSign && sign !== lastVelSign && a > 0.015) knock(Math.min(1, a / 0.1));
+      if (sign) lastVelSign = sign;
+    }
+
     // ---------- 背景・天井 ----------
     function drawBackground() {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -300,6 +364,8 @@
         if (Math.abs(lx - glass.cx) > glass.R + 30 || ly < glass.rimY - 30 || ly > glass.deskY + 10) return false;
         const dir = lx < glass.cx ? 1 : -1;
         wobble.vel = Math.max(-WOBBLE_MAX_V, Math.min(WOBBLE_MAX_V, wobble.vel + dir * 1.1));
+        setupSound();
+        knock(0.6);
         return true;
       },
       hitTest(wx, wy) {
@@ -307,7 +373,13 @@
         return Math.abs(lx - glass.cx) <= glass.R + 30 && ly >= glass.rimY - 30 && ly <= glass.deskY + 10;
       },
 
-      update() {},
+      update(dt) { updateSound(dt); },
+      dispose() {
+        if (!snd) return;
+        for (const s of snd.srcs) { try { s.stop(); } catch (e) { /* 停止済み */ } }
+        snd.scrape.disconnect(); snd.slosh.disconnect();
+        snd = null;
+      },
       drawBack() {
         drawBackground();
         ctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);

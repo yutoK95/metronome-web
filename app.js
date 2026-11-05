@@ -65,6 +65,12 @@
     get dropSize() { return dropSize; },
     get running() { return running; },
     hasAudio: () => !!actx,
+    // 効果音用: 必要ならオーディオを用意して { ac, out, noise } を返す（ユーザー操作の中で呼ぶ）
+    audio: () => {
+      ensureAudio();
+      if (actx.state !== 'running') actx.resume();
+      return { ac: actx, out: master, noise: noiseBuf };
+    },
     t: (key, params) => t(key, params),
     screenTop: () => -view.oy / view.s,   // 画面の上端のワールド y 座標
     audioNow: () => (actx ? audioNow() : 0),
@@ -82,6 +88,7 @@
 
   function setScene(name) {
     if (!window.Scenes[name]) name = 'glass';
+    if (scene && scene.dispose) scene.dispose();
     scene = window.Scenes[name](app);
     initWorld();
     $('scene').value = name;
@@ -137,7 +144,7 @@
     conv.connect(wet).connect(master);
     reverbIn = conv;
 
-    noiseBuf = actx.createBuffer(1, Math.floor(actx.sampleRate * 0.1), actx.sampleRate);
+    noiseBuf = actx.createBuffer(1, Math.floor(actx.sampleRate * 2), actx.sampleRate);
     const nd = noiseBuf.getChannelData(0);
     for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
   }
