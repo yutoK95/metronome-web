@@ -6,7 +6,7 @@
   const SPAWN_Y = -12;       // 水滴の出現位置（画面上端の少し上）
   const SPAWN_VY = 1.2;
   const MAX_PARTICLES = 2000;
-  const FS = 0.5;            // 水描画用フィールドの解像度倍率
+  const FS = 0.75;           // 水描画用フィールドの解像度倍率
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('c');
@@ -228,12 +228,31 @@
     fCtx.globalCompositeOperation = 'source-over';
     fCtx.clearRect(0, 0, fw, fh);
     fCtx.globalCompositeOperation = 'lighter';
-    const { x, y, n } = sim;
+    const { x, y, vx, vy, rho, onFloor, n } = sim;
+    const rho0 = sim.rho0;
     for (let i = 0; i < n; i++) {
-      const sx = x[i] * FS - spriteR, sy = y[i] * FS - spriteR;
-      if (sy < -2 * spriteR || sy > fh) continue;
-      fCtx.drawImage(sprite, sx, sy);
+      const cx = x[i] * FS, cy = y[i] * FS;
+      if (cy < -2 * spriteR || cy > fh + spriteR) continue;
+      // 周りに粒子が少ない（しぶき・水滴）ほど小さく描いて、ボール感を減らす
+      const d = Math.min(1, rho[i] / rho0);
+      const size = 0.65 + 0.4 * d;
+      let a = size, b = size, c = 1, s = 0;
+      if (onFloor[i]) {
+        // 床の水は横に平たく伸ばして水たまりに見せる
+        a = size * 2.0; b = size * 0.5;
+      } else {
+        // 速く動く水滴は進行方向に少し伸ばす
+        const sp = Math.hypot(vx[i], vy[i]);
+        if (sp > 0.8) {
+          const st = 1 + Math.min(1.2, (sp - 0.8) * 0.3);
+          c = vx[i] / sp; s = vy[i] / sp;
+          a = size * st; b = size / Math.sqrt(st);
+        }
+      }
+      fCtx.setTransform(c * a, s * a, -s * b, c * b, cx, cy);
+      fCtx.drawImage(sprite, -spriteR, -spriteR);
     }
+    fCtx.setTransform(1, 0, 0, 1, 0, 0);
     if (sim.baseY < sim.deskY - 0.5) {
       fCtx.fillStyle = '#fff';
       fCtx.fillRect(0, sim.baseY * FS, fw, (sim.deskY - sim.baseY) * FS + 2);
@@ -241,7 +260,7 @@
 
     const src = fCtx.getImageData(0, 0, fw, fh).data;
     const dst = outImg.data;
-    const T = 95, E = 40, F = 25;   // しきい値・ハイライト幅・アンチエイリアス幅
+    const T = 95, E = 22, F = 25;   // しきい値・ハイライト幅・アンチエイリアス幅
     for (let r = 0, i = 0; r < fh; r++) {
       const cr = rowCol[r * 3], cg = rowCol[r * 3 + 1], cb = rowCol[r * 3 + 2];
       for (let c = 0; c < fw; c++, i += 4) {

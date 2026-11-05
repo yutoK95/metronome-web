@@ -9,10 +9,10 @@
     k: 0.35,      // 圧力の硬さ
     kNear: 1.6,   // 近接圧（粒子の重なり防止・表面張力っぽさ）
     g: 0.15,      // 重力 (px / substep^2)
-    vmax: 5,      // 最大速度 (px / substep) すり抜け防止
+    vmax: 3.8,      // 最大速度 (px / substep) すり抜け防止
     pr: 3,        // 粒子の衝突半径
-    visc: 0.08,   // 粘性
-    areaPer: 57,  // 1粒子あたりの面積（プールに変換するときの水位計算用）
+    visc: 0.15,   // 粘性
+    areaPer: 42,  // 1粒子あたりの面積（プールに変換するときの水位計算用）
     topLimit: 70, // プールの水位上限（画面上端からの距離）
   };
 
@@ -71,6 +71,11 @@
       this.px = new Float32Array(cap); this.py = new Float32Array(cap);
       this.vx = new Float32Array(cap); this.vy = new Float32Array(cap);
       this.mark = new Uint8Array(cap);
+      this.wd = new Float32Array(cap); this.wnx = new Float32Array(cap); this.wny = new Float32Array(cap);
+      this.buildWallTable();
+      this.cnx = new Float32Array(cap); this.cny = new Float32Array(cap);  // 衝突面の法線
+      this.rho = new Float32Array(cap);      // 描画用: 周りの混み具合
+      this.onFloor = new Uint8Array(cap);    // 描画用: 床に接しているか
       this.yOff = 240;
       this.gw = Math.ceil(W / this.h) + 2;
       this.gh = Math.ceil((H + this.yOff) / this.h) + 2;
@@ -82,12 +87,48 @@
       this.reset();
     }
 
+    // 壁の向こうに仮想粒子が並んでいるとみなした密度寄与のテーブル。
+    // これが無いと壁際の密度が低く見積もられ、水が壁に吸い寄せられて這い上がる。
+    buildWallTable() {
+      const h = this.h, sp = 5.5, N = 64;
+      this.wt = { N, step: h / N, W1: new Float32Array(N + 1), W2: new Float32Array(N + 1), N1: new Float32Array(N + 1), N2: new Float32Array(N + 1) };
+      for (let a = 0; a <= N; a++) {
+        const d = Math.max(0.01, a * h / N);
+        for (let k = -4; k <= 4; k++) {
+          const r = Math.hypot(d, k * sp), q = 1 - r / h;
+          if (q <= 0) continue;
+          this.wt.W1[a] += q * q; this.wt.W2[a] += q * q * q;
+          this.wt.N1[a] += q * d / r; this.wt.N2[a] += q * q * d / r;
+        }
+      }
+    }
+
+    // グラスの壁に近い粒子について、最も近い壁面までの距離と法線を求める
+    wallDistances() {
+      const { n, x, y, wd, wnx, wny, h, glass } = this;
+      const segs = glass.segs, bb = glass.bbox;
+      for (let i = 0; i < n; i++) {
+        wd[i] = 1e9;
+        const xi = x[i], yi = y[i];
+        if (xi < bb.x0 - h || xi > bb.x1 + h || yi < bb.y0 - h || yi > bb.y1 + h) continue;
+        for (let s = 0; s < segs.length; s++) {
+          const sg = segs[s];
+          const u = (xi - sg.ax) * sg.tx + (yi - sg.ay) * sg.ty;
+          if (u < 0 || u > sg.len) continue;   // 端点（グラスの縁）では支えない
+          const dx = xi - (sg.ax + sg.tx * u), dy = yi - (sg.ay + sg.ty * u);
+          const d = Math.hypot(dx, dy);
+          if (d - sg.half < wd[i] && d > 1e-6) { wd[i] = d - sg.half; wnx[i] = dx / d; wny[i] = dy / d; }
+        }
+      }
+    }
+
     reset() { this.n = 0; this.baseY = this.deskY; }
 
     add(x, y, vx, vy) {
       if (this.n >= this.cap) return;
       const i = this.n++;
       this.x[i] = x; this.y[i] = y; this.vx[i] = vx; this.vy[i] = vy;
+      this.rho[i] = 0; this.onFloor[i] = 0;
     }
 
     // 先頭（一番下）の粒子が (x, y) に来るように水滴を生成
@@ -181,6 +222,7 @@
       }
 
       this.buildGrid();
+      this.wallDistances();
       this.relax();
       this.collide();
 
@@ -189,20 +231,37 @@
         let ux = x[i] - px[i], uy = y[i] - py[i];
         const s2 = ux * ux + uy * uy;
         if (s2 > vmax2) { const f = this.vmax / Math.sqrt(s2); ux *= f; uy *= f; }
+        // 押し戻しで生じた「壁から離れる速度」は捨てる（壁を這い上がる現象の防止）
+        const nx = this.cnx[i], ny = this.cny[i];
+        if (nx !== 0 || ny !== 0) {
+          const nl = Math.hypot(nx, ny), vn = (ux * nx + uy * ny) / nl;
+          if (vn > 0) { ux -= vn * nx / nl; uy -= vn * ny / nl; }
+        }
         vx[i] = ux; vy[i] = uy;
       }
     }
 
     relax() {
-      const { n, x, y, k, kNear, rho0, nbJ, nbQ, nbUx, nbUy } = this;
+      const { n, x, y, k, kNear, rho0, nbJ, nbQ, nbUx, nbUy, wt } = this;
       for (let i = 0; i < n; i++) {
         const cnt = this.gather(i);
         let rho = 0, rhoN = 0;
         for (let a = 0; a < cnt; a++) { const q = nbQ[a]; rho += q * q; rhoN += q * q * q; }
+        this.rho[i] = rho;
+        let wa = -1;
+        if (this.wd[i] < this.h) {
+          wa = Math.max(0, Math.min(wt.N, Math.round(this.wd[i] / wt.step)));
+          rho += wt.W1[wa]; rhoN += wt.W2[wa];
+        }
         let P = k * (rho - rho0);
         if (P < 0) P *= 0.25;   // 引力（表面張力）を弱めて気泡や盛り上がりが残らないようにする
         const PN = kNear * rhoN;
         let dxi = 0, dyi = 0;
+        if (wa >= 0) {
+          // 壁からの押し返し（壁への吸着は起こさないよう圧力が正のときだけ）
+          const push = 0.7 * (Math.max(0, P) * wt.N1[wa] + PN * wt.N2[wa]);
+          dxi += push * this.wnx[i]; dyi += push * this.wny[i];
+        }
         for (let a = 0; a < cnt; a++) {
           const q = nbQ[a], j = nbJ[a];
           const D = 0.5 * (P * q + PN * q * q);
@@ -221,14 +280,16 @@
       const poolActive = this.baseY < this.deskY - 0.5;
 
       for (let i = 0; i < n; i++) {
-        let xi = x[i], yi = y[i];
+        let xi = x[i], yi = y[i], cnx = 0, cny = 0;
 
         // 床（机 or 溜まった水のプール）
         let floor = this.deskY;
         if (poolActive && (submerged || !glass.inBowl(xi, yi))) floor = this.baseY;
+        this.onFloor[i] = yi > floor - pr - 1.5 ? 1 : 0;
         if (yi > floor - pr) {
           yi = floor - pr;
           xi = px[i] + (xi - px[i]) * 0.85;
+          cny -= 1;
         }
         // 左右の壁
         if (xi < pr) xi = pr; else if (xi > W - pr) xi = W - pr;
@@ -248,6 +309,7 @@
               if (u >= -1 && u <= sg.len + 1) {
                 const side = s0 > 0 ? 1 : -1;
                 xi = ix + sg.nx * side * R; yi = iy + sg.ny * side * R;
+                cnx += sg.nx * side; cny += sg.ny * side;
               }
             }
             // カプセルとの距離
@@ -259,14 +321,17 @@
               if (d2 > 1e-8) {
                 const d = Math.sqrt(d2);
                 xi = cxp + dx / d * R; yi = cyp + dy / d * R;
+                cnx += dx / d; cny += dy / d;
               } else {
                 const side = s0 > 0 ? 1 : -1;
                 xi = cxp + sg.nx * side * R; yi = cyp + sg.ny * side * R;
+                cnx += sg.nx * side; cny += sg.ny * side;
               }
             }
           }
         }
         x[i] = xi; y[i] = yi;
+        this.cnx[i] = cnx; this.cny[i] = cny;
       }
     }
 
@@ -302,6 +367,7 @@
         if (w !== i) {
           this.x[w] = this.x[i]; this.y[w] = this.y[i];
           this.vx[w] = this.vx[i]; this.vy[w] = this.vy[i];
+          this.rho[w] = this.rho[i]; this.onFloor[w] = this.onFloor[i];
         }
         w++;
       }

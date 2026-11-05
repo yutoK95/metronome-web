@@ -32,6 +32,7 @@
   #dots span.accent.on { background: #fff; box-shadow: 0 0 10px #bfe3ff; }
   #status { font-size: 12px; opacity: 0.7; text-align: center; }
   .hint { font-size: 11px; opacity: 0.5; text-align: center; }
+  #hide, #toggle { width: 34px; height: 34px; padding: 0; font-size: 16px; line-height: 1; }
   #toggle { position: fixed; top: 12px; left: 12px; display: none; }
   #panel.hidden { display: none; }
   #panel.hidden + #toggle { display: block; }
@@ -42,9 +43,9 @@
 <canvas id="c"></canvas>
 
 <div id="panel">
-  <div class="row" style="justify-content: space-between">
+  <div class="row">
+    <button id="hide" title="メニューを閉じる" aria-label="メニューを閉じる">✕</button>
     <h1>しずくメトロノーム</h1>
-    <button id="hide" title="パネルを隠す" style="padding: 2px 8px">–</button>
   </div>
   <div class="row bpm">
     <button id="minus">−</button>
