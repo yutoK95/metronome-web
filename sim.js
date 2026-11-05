@@ -14,6 +14,8 @@
     visc: 0.15,   // 粘性
     areaPer: 42,  // 1粒子あたりの面積（プールに変換するときの水位計算用）
     topLimit: 70, // プールの水位上限（画面上端からの距離）
+    rimDamp: 0.55, // グラスの縁の近くで横の動きをどれだけ残すか
+    adhesion: 0.5, adhesionRange: 9,    // 物体の外側に水が付着する強さ（px / substep）と届く距離
     killY: Infinity, // これより下（画面外）に落ちた粒子はすぐプールに変換する
   };
 
@@ -46,6 +48,8 @@
       local.push([left[i], left[i + 1]]);
       local.push([right[i], right[i + 1]]);
     }
+    // ステム: あふれた水がボウルの外側からステムを伝って台座へ流れ落ちるように当たり判定を付ける
+    local.push([[cx, bottomY + 2], [cx, deskY - 6], 2.5]);
 
     let area = 0;
     for (let i = 0; i < 200; i++) area += 2 * Math.max(0, hwAt((i + 0.5) / 200) - 4) * bowlH / 200;
@@ -56,7 +60,8 @@
       pivotX: cx, pivotY: deskY,
       angle: 0,          // 傾き（rad、正で時計回り）
       omega: 0,          // 角速度（rad / substep）。壁が水を押す速さの計算に使う
-      segs: local.map(() => ({ ax: 0, ay: 0, tx: 0, ty: 0, nx: 0, ny: 0, len: 0, half: 1.5 })),
+      segs: local.map((l) => ({ ax: 0, ay: 0, tx: 0, ty: 0, nx: 0, ny: 0, len: 0, half: l[2] || 1.5 })),
+      adhesive: true,    // あふれた水がグラスの外側に沿って流れる（はがれて飛び散らない）
       bbox: { x0: 0, x1: 0, y0: 0, y1: 0 },
       // ワールド座標 → 傾けていないグラスの座標
       toLocal(x, y) {
@@ -202,6 +207,8 @@
         wd[i] = 1e9;
         const xi = x[i], yi = y[i];
         if (xi < bb.x0 - h || xi > bb.x1 + h || yi < bb.y0 - h || yi > bb.y1 + h) continue;
+        // 付着する物体（グラス）の外側の水には押し返しを付けない（付着で外側を伝って流れるようにする）
+        if (body.adhesive && !body.inBowl(xi, yi)) continue;
         for (let s = 0; s < segs.length; s++) {
           const sg = segs[s];
           const u = (xi - sg.ax) * sg.tx + (yi - sg.ay) * sg.ty;
@@ -406,6 +413,7 @@
         // 物体（カエルなど）
         if (xi > bb.x0 - m && xi < bb.x1 + m && yi > bb.y0 - m && yi < bb.y1 + m) {
           const p0x = px[i], p0y = py[i];
+          let gapMin = this.adhesionRange, gdx = 0, gdy = 0;
           for (let s = 0; s < segs.length; s++) {
             const sg = segs[s], R = pr + sg.half;
             // すり抜け判定
@@ -427,6 +435,10 @@
             if (u < 0) u = 0; else if (u > sg.len) u = sg.len;
             const cxp = sg.ax + sg.tx * u, cyp = sg.ay + sg.ty * u;
             const dx = xi - cxp, dy = yi - cyp, d2 = dx * dx + dy * dy;
+            if (body.adhesive && d2 > 1e-8) {
+              const d = Math.sqrt(d2), gap = d - R;
+              if (gap < gapMin) { gapMin = gap; gdx = dx / d; gdy = dy / d; }
+            }
             if (d2 < R * R) {
               if (d2 > 1e-8) {
                 const d = Math.sqrt(d2);
@@ -440,6 +452,20 @@
                 hit = true;
               }
             }
+          }
+          // 縁を越える水: 横向きの勢いを弱めて、飛び出さずに縁からあふれ出るようにする
+          if (body.rimHW && !body.inBowl(xi, yi)) {
+            const [lx, ly] = body.angle ? body.toLocal(xi, yi) : [xi, yi];
+            if (ly < body.rimY + 25 && ly > body.rimY - 6 && Math.abs(lx - body.cx) < body.rimHW + 30) {
+              xi = px[i] + (xi - px[i]) * this.rimDamp;
+            }
+          }
+          // 付着: グラスの外側のすぐ近くにある水は壁へ少し引き寄せ、壁を伝って流れ落ちるようにする
+          // （縁より上の盛り上がりには効かせない。効かせると縁で水が支えられて高く盛り上がる）
+          if (gapMin > 0 && gapMin < this.adhesionRange && !body.inBowl(xi, yi) &&
+              (!body.toLocal || body.toLocal(xi, yi)[1] > body.rimY + 3)) {
+            const pull = Math.min(gapMin, this.adhesion);
+            xi -= gdx * pull; yi -= gdy * pull;
           }
         }
         if (hit && body.omega && (cnx || cny)) {
