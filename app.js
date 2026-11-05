@@ -3,17 +3,17 @@
 
   const H = 720;             // ワールドの高さ（幅は画面比率から決める）
   const STEP_HZ = 180;       // 物理のサブステップ / 秒
-  const SPAWN_VY = 0.5;      // 水時計のノズルから離れるときの初速
-
-  // 水時計（ガラスの水槽 + 真鍮の金具）。ノズルの先で水滴がふくらみ、拍ごとに落ちる
-  const CLOCK = { top: 14, bot: 104, halfTop: 50, halfBot: 43, nozzleY: 142 };
-  const CLOCK_MINUTES = 30;  // 水槽の目盛りが一周する時間（分）
-  let playSec = 0;           // 再生していた合計時間 = 水時計の減った量
-  let lastSpawnT = 0, nextSpawnT = 0, ripple = 0;
-  // 先頭の粒子の出現位置。しずくの上端がノズルの先に来るようにする
-  const spawnY = () => CLOCK.nozzleY + 3 + 4.2 * (dropSize - 1);
   const MAX_PARTICLES = 2000;
   const FS = 0.7;            // 水描画用フィールドの解像度倍率
+
+  // シーン: 雨上がりの野原。頭上の葉っぱの先から、地面に座ったカエルの頭へしずくが落ちる
+  const GROUND_Y = 600;      // カエルが座っている地面
+  const LEAF_TIP_Y = 170;    // しずくが落ちる直前の葉先の高さ
+  const LEAF_DROOP = 0.05;   // しずくの重みで葉がしなる角度（rad）
+  const PUDDLE_MAX = 330;    // 水たまりの最大半径
+  const SPAWN_VY = 0.5;      // 葉先から離れるときの初速
+  // 先頭の粒子の出現位置。しずくの上端が葉先に来るようにする
+  const spawnY = () => LEAF_TIP_Y + 3 + 4.2 * (dropSize - 1);
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('c');
@@ -22,23 +22,33 @@
   // ---------- 状態 ----------
   let bpm = 90, beatsPerBar = 4, dropSize = 5, volume = 0.7;
   let running = false;
-  let W, glass, sim, table, bowlCapacity;
-  const DESK_Y = 585;        // テーブル天板の高さ
-  const TABLE_THICK = 22;    // 天板の厚み
-  let tableRy = 60;          // 天板を斜め上から見た楕円の縦半径（見た目だけ）
-  const FLOOR_Y = H + 60;    // 床は画面の外。こぼれた水はここに溜まり、やがて画面下からせり上がる
+  let W, frog, sim, leaf, scenery;
+  let playSec = 0, dropCount = 0;
+  let lastSpawnT = 0, nextSpawnT = 0;
+  let hitAt = -10, hitPeak = 0;            // 頭に当たった時刻（目を細める演出用）
+  let blinkAt = 3;                         // 次のまばたき（performance 秒）
+  const puddle = { rx: 0, ripples: [] };   // カエルの周りの水たまり（地面の水の量で大きさが決まる）
   const view = { s: 1, ox: 0, oy: 0, dpr: 1 };
 
   // ---------- ワールド ----------
   function initWorld() {
     const aspect = innerWidth / innerHeight;
     W = Math.round(Math.min(1680, Math.max(720, H * aspect)));
-    const rx = Math.round(Math.min(560, W * 0.44));
-    tableRy = Math.round(rx * 0.12);
-    table = { cx: W / 2, rx, x0: W / 2 - rx, x1: W / 2 + rx, top: DESK_Y, bottom: DESK_Y + TABLE_THICK };
-    glass = FluidSim.makeGlass(W / 2, DESK_Y);
-    sim = new FluidSim.Sim({ W, H, floorY: FLOOR_Y, table, glass, cap: 4000, params: { killY: H + 10, topLimit: CLOCK.nozzleY + 40 } });
-    bowlCapacity = glass.area / sim.areaPer;
+    frog = FluidSim.makeFrog(W / 2, GROUND_Y);
+    sim = new FluidSim.Sim({
+      W, H, floorY: GROUND_Y, body: frog, cap: 4000,
+      params: { topLimit: GROUND_Y - 25 },
+    });
+    // 葉っぱ: 付け根を軸に回転する。しなりきったとき葉先がカエルの真上に来る
+    const px = W / 2 - 175, py = 72;
+    leaf = {
+      px, py,
+      len: Math.hypot(W / 2 - px, LEAF_TIP_Y - py),
+      full: Math.atan2(LEAF_TIP_Y - py, W / 2 - px),
+      angle: 0, vel: 0,
+    };
+    leaf.angle = leaf.full - LEAF_DROOP * 0.7;
+    buildScenery();
     setupField();
     resize();
   }
@@ -49,9 +59,25 @@
     canvas.height = Math.round(innerHeight * view.dpr);
     view.s = Math.min(canvas.width / W, canvas.height / H);
     view.ox = (canvas.width - W * view.s) / 2;
-    view.oy = canvas.height - H * view.s;   // 床が画面の下端に来るように下揃え
+    view.oy = canvas.height - H * view.s;   // 地面が画面の下端に来るように下揃え
   }
   addEventListener('resize', resize);
+
+  // 背景の草・雲などの配置（毎回同じになるよう固定の乱数）
+  function buildScenery() {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const tufts = [];
+    for (let i = 0; i < 60; i++) {
+      const x = rnd() * W;
+      if (Math.abs(x - W / 2) < 170) continue;          // カエルの前はあけておく
+      tufts.push({ x, y: GROUND_Y + 30 + rnd() * (H - GROUND_Y - 20), h: 14 + rnd() * 22, n: 3 + Math.floor(rnd() * 4), hue: rnd() });
+    }
+    tufts.sort((a, b) => a.y - b.y);
+    const clouds = [];
+    for (let i = 0; i < 5; i++) clouds.push({ x: rnd() * W, y: 40 + rnd() * 160, r: 50 + rnd() * 60, sp: 2 + rnd() * 4 });
+    scenery = { tufts, clouds };
+  }
 
   // ---------- オーディオ ----------
   let actx = null, master, reverbIn, noiseBuf;
@@ -117,7 +143,7 @@
   }
 
   // ---------- 拍のスケジューリング ----------
-  // beats: 音を鳴らす時刻（=着水時刻）。水滴は落下時間を逆算して早めに生成する。
+  // beats: 音を鳴らす時刻（=頭に当たる時刻）。しずくは落下時間を逆算して早めに離す。
   let beats = [], nextBeatTime = 0, beatCounter = 0;
   const audioNow = () => actx.currentTime - (actx.outputLatency || actx.baseLatency || 0);
 
@@ -132,14 +158,14 @@
         time: nextBeatTime,
         idx: beatCounter,
         accent: beatsPerBar > 1 && beatCounter % beatsPerBar === 0,
-        spawned: false, sounded: false, skip: false,
+        spawned: false, sounded: false, skip: false, hit: false,
       });
       beatCounter++;
       nextBeatTime += 60 / bpm;
     }
   }
 
-  // BPM や開始時に、まだ水滴を落としていない拍を組み直す
+  // BPM や開始時に、まだしずくを離していない拍を組み直す
   function rescheduleFrom() {
     beats = beats.filter((b) => b.spawned);
     const minStart = audioNow() + fallSeconds() + 0.05;
@@ -154,20 +180,13 @@
     if (running) fillQueue();
   }
 
-  function soundPitch() {
-    const fill = sim.countInBowl() / bowlCapacity;
-    if (sim.baseY <= glass.rimY + 6) return 420;   // グラスが水没した後
-    if (fill > 0.9) return 380;                    // あふれて机に落ちる音
-    return 520 + 650 * Math.min(1, fill);          // 溜まるほど音が高くなる
-  }
-
   setInterval(() => {
     if (!actx) return;
     if (running) fillQueue();
     const now = audioNow();
     for (const b of beats) {
       if (b.spawned && !b.sounded && !b.skip && b.time < now + 0.15) {
-        playDrop(Math.max(b.time + (actx.currentTime - now), actx.currentTime), b.accent, soundPitch());
+        playDrop(Math.max(b.time + (actx.currentTime - now), actx.currentTime), b.accent, 640);
         b.sounded = true;
       }
     }
@@ -177,9 +196,8 @@
   function processSpawns() {
     if (!actx) return;
     const now = audioNow();
-    const surf = surfaceY();
     const y0 = spawnY();
-    const steps = sim.predictFall(y0, SPAWN_VY, surf - 2);
+    const steps = sim.predictFall(y0, SPAWN_VY, surfaceY() - 2);
     nextSpawnT = 0;
     for (const b of beats) {
       if (b.spawned) continue;
@@ -189,27 +207,34 @@
       if (now > b.time - 0.03) { b.skip = true; continue; }  // タブ非表示などで間に合わなかった拍
       const late = Math.round((now - spawnT) * STEP_HZ);
       const st = sim.kinematic(y0, SPAWN_VY, late);
-      sim.spawnDrop(glass.cx, st.y, dropSize, st.v);
+      sim.spawnDrop(frog.cx, st.y, dropSize, st.v);
       lastSpawnT = now;
-      ripple = 1;
+    }
+    // 頭に当たった瞬間に目を細める
+    for (const b of beats) {
+      if (b.sounded && !b.hit && b.time <= now) {
+        b.hit = true;
+        hitAt = b.time;
+        hitPeak = b.accent ? 0.75 : 0.5;
+        dropCount++;
+        addRipples();
+      }
     }
   }
 
-  // グラス中心の水面の高さ（落下中の水滴は除外）
+  // カエルの頭の真ん中の水面の高さ（落下中のしずくは除外）
   const ysBuf = [];
   function surfaceY() {
     const { x, y, vy, n } = sim;
     ysBuf.length = 0;
     for (let i = 0; i < n; i++) {
-      if (Math.abs(x[i] - glass.cx) < 9 && vy[i] < 1.0 && y[i] > 0) ysBuf.push(y[i]);
+      if (Math.abs(x[i] - frog.cx) < 9 && vy[i] < 1.0 && y[i] > LEAF_TIP_Y + 40 && y[i] < frog.headTopY + 10) ysBuf.push(y[i]);
     }
-    let s;
-    if (ysBuf.length >= 3) { ysBuf.sort((a, b) => a - b); s = ysBuf[2] - sim.pr; }
-    else s = glass.bottomY - sim.pr - 1.5;
-    return Math.min(s, sim.baseY);
+    if (ysBuf.length >= 3) { ysBuf.sort((a, b) => a - b); return ysBuf[2] - sim.pr; }
+    return frog.headTopY - sim.pr - 3;
   }
 
-  // ---------- 描画 ----------
+  // ---------- 水の描画 ----------
   let fw, fh, fCan, fCtx, oCan, oCtx, outImg, sprite, spriteR, rowCol;
   function setupField() {
     fw = Math.ceil(W * FS); fh = Math.ceil(H * FS);
@@ -231,13 +256,13 @@
     sc.fillStyle = gr;
     sc.fillRect(0, 0, spriteR * 2, spriteR * 2);
 
-    // 行ごとの水の色（深いほど濃い）
+    // 行ごとの水の色（明るい屋外なので淡い水色、下ほど少し濃い）
     rowCol = new Uint8Array(fh * 3);
     for (let r = 0; r < fh; r++) {
       const t = r / fh;
-      rowCol[r * 3] = 70 - 40 * t;
-      rowCol[r * 3 + 1] = 165 - 60 * t;
-      rowCol[r * 3 + 2] = 245 - 45 * t;
+      rowCol[r * 3] = 185 - 50 * t;
+      rowCol[r * 3 + 1] = 225 - 35 * t;
+      rowCol[r * 3 + 2] = 250 - 15 * t;
     }
   }
 
@@ -245,28 +270,22 @@
     fCtx.globalCompositeOperation = 'source-over';
     fCtx.clearRect(0, 0, fw, fh);
     fCtx.globalCompositeOperation = 'lighter';
-    const { x, y, vx, vy, rho, onFloor, seed, n } = sim;
+    const { x, y, vx, vy, rho, onFloor, n } = sim;
     const rho0 = sim.rho0;
     for (let i = 0; i < n; i++) {
       const cx = x[i] * FS;
       let cy = y[i] * FS;
       if (cy < -2 * spriteR || cy > fh + spriteR) continue;
-      // 周りに粒子が少ない（しぶき・水滴）ほど小さく描いて、ボール感を減らす
+      // 周りに粒子が少ない（しぶき・しずく）ほど小さく描いて、ボール感を減らす
       const d = Math.min(1, rho[i] / rho0);
       const size = 0.65 + 0.4 * d;
       let a = size, b = size, c = 1, s = 0;
-      const u = (x[i] - table.cx) / table.rx;
-      if (sim.baseY > DESK_Y && y[i] > DESK_Y - 14 && y[i] < DESK_Y && Math.abs(u) < 1) {
-        // 天板の上の水: 奥行き方向に縦長に伸ばして、楕円の天板に沿った一枚の水たまりに見せる（見た目だけ）
-        const depth = tableRy * 0.8 * Math.sqrt(1 - u * u) * (0.55 + 0.45 * seed[i]);
-        a = size * 1.6;
-        b = Math.max(size * 0.8, depth / 7);
-        cy = (DESK_Y + (seed[i] - 0.5) * depth * 0.3) * FS;
+      if (onFloor[i] && y[i] > GROUND_Y - 10) {
+        continue;   // 地面に着いた水は水たまり（drawPuddle）として描く
       } else if (onFloor[i]) {
-        // 床の水は横に平たく伸ばして水たまりに見せる
         a = size * 2.0; b = size * 0.5;
       } else {
-        // 速く動く水滴は進行方向に少し伸ばす
+        // 速く動くしずくは進行方向に少し伸ばす
         const sp = Math.hypot(vx[i], vy[i]);
         if (sp > 0.8) {
           const st = 1 + Math.min(1.2, (sp - 0.8) * 0.3);
@@ -278,26 +297,26 @@
       fCtx.drawImage(sprite, -spriteR, -spriteR);
     }
     fCtx.setTransform(1, 0, 0, 1, 0, 0);
-    if (sim.baseY < H) {
+    if (sim.baseY < GROUND_Y - 0.5) {
       fCtx.fillStyle = '#fff';
       fCtx.fillRect(0, sim.baseY * FS, fw, (H - sim.baseY) * FS + 2);
     }
 
     const src = fCtx.getImageData(0, 0, fw, fh).data;
     const dst = outImg.data;
-    const T = 95, E = 22, F = 25;   // しきい値・ハイライト幅・アンチエイリアス幅
+    const T = 95, E = 22, F = 25;   // しきい値・縁の幅・アンチエイリアス幅
+    const er = 70, eg = 135, eb = 200;   // 縁の色（明るい背景でも輪郭が見えるよう濃いめ）
     for (let r = 0, i = 0; r < fh; r++) {
       const cr = rowCol[r * 3], cg = rowCol[r * 3 + 1], cb = rowCol[r * 3 + 2];
       for (let c = 0; c < fw; c++, i += 4) {
         const a = src[i + 3];
         if (a < T - F) { dst[i + 3] = 0; continue; }
         if (a < T + E) {
-          // 縁: 明るい色から内部の色へなめらかに
           const t = a < T ? 0 : (a - T) / E;
-          dst[i] = 200 + (cr - 200) * t; dst[i + 1] = 235 + (cg - 235) * t; dst[i + 2] = 255 + (cb - 255) * t;
-          dst[i + 3] = a < T ? 210 * (a - (T - F)) / F : 210 - 60 * t;
+          dst[i] = er + (cr - er) * t; dst[i + 1] = eg + (cg - eg) * t; dst[i + 2] = eb + (cb - eb) * t;
+          dst[i + 3] = a < T ? 200 * (a - (T - F)) / F : 200 - 40 * t;
         } else {
-          dst[i] = cr; dst[i + 1] = cg; dst[i + 2] = cb; dst[i + 3] = 150;
+          dst[i] = cr; dst[i + 1] = cg; dst[i + 2] = cb; dst[i + 3] = 160;
         }
       }
     }
@@ -306,306 +325,464 @@
     ctx.drawImage(oCan, 0, 0, fw / FS, fh / FS);
   }
 
-  function bowlPath() {
-    ctx.beginPath();
-    const L = glass.left, R = glass.right;
-    ctx.moveTo(L[L.length - 1][0], L[L.length - 1][1]);
-    for (let i = L.length - 2; i >= 0; i--) ctx.lineTo(L[i][0], L[i][1]);
-    for (let i = 1; i < R.length; i++) ctx.lineTo(R[i][0], R[i][1]);
-  }
-
-  function drawGlassBack() {
-    bowlPath();
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(200, 230, 255, 0.06)';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(glass.cx, glass.rimY, glass.rimHW, 7, 0, Math.PI, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(220, 240, 255, 0.3)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
-
-  function drawGlassFront() {
-    const { cx, rimY, rimHW, bottomY, deskY } = glass;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
-    bowlPath();
-    ctx.strokeStyle = 'rgba(225, 240, 255, 0.75)';
-    ctx.lineWidth = 2.4;
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.ellipse(cx, rimY, rimHW, 7, 0, 0, Math.PI);
-    ctx.strokeStyle = 'rgba(235, 245, 255, 0.7)';
-    ctx.lineWidth = 1.8;
-    ctx.stroke();
-
-    // ステム
-    const sg = ctx.createLinearGradient(cx - 3, 0, cx + 3, 0);
-    sg.addColorStop(0, 'rgba(255,255,255,0.85)');
-    sg.addColorStop(1, 'rgba(170,200,230,0.45)');
-    ctx.fillStyle = sg;
-    ctx.beginPath();
-    ctx.moveTo(cx - 6, bottomY + 2);
-    ctx.quadraticCurveTo(cx - 2.5, bottomY + 18, cx - 2.5, bottomY + 30);
-    ctx.lineTo(cx - 2.5, deskY - 10);
-    ctx.quadraticCurveTo(cx - 3, deskY - 6, cx - 10, deskY - 5);
-    ctx.lineTo(cx + 10, deskY - 5);
-    ctx.quadraticCurveTo(cx + 3, deskY - 6, cx + 2.5, deskY - 10);
-    ctx.lineTo(cx + 2.5, bottomY + 30);
-    ctx.quadraticCurveTo(cx + 2.5, bottomY + 18, cx + 6, bottomY + 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // 台座
-    ctx.beginPath();
-    ctx.ellipse(cx, deskY - 3.5, 48, 4.5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(200, 225, 250, 0.35)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(235, 245, 255, 0.7)';
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
-
-    // ハイライト
-    ctx.beginPath();
-    for (let t = 0.3; t <= 0.86; t += 0.02) {
-      const yy = bottomY - t * glass.bowlH;
-      const xx = cx - glass.hwAt(t) + 9;
-      if (t === 0.3) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
-    }
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  }
-
+  // ---------- 背景 ----------
   function drawBackground() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const cw = canvas.width, ch = canvas.height;
-    const gcx = view.ox + glass.cx * view.s, gcy = view.oy + glass.bottomY * view.s;
-    const bg = ctx.createRadialGradient(gcx, gcy, 0, gcx, gcy, Math.max(cw, ch) * 0.8);
-    bg.addColorStop(0, '#2c3d57');
-    bg.addColorStop(1, '#0b1017');
-    ctx.fillStyle = bg;
+    const sky = ctx.createLinearGradient(0, 0, 0, ch);
+    sky.addColorStop(0, '#9fc4d6');
+    sky.addColorStop(0.6, '#dbe8dc');
+    sky.addColorStop(1, '#e9efd9');
+    ctx.fillStyle = sky;
     ctx.fillRect(0, 0, cw, ch);
+
+    ctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);
+    const t = performance.now() / 1000;
+    const x0 = -view.ox / view.s, x1 = (canvas.width - view.ox) / view.s, top = -view.oy / view.s;
+
+    // 雲
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    for (const c of scenery.clouds) {
+      const span = x1 - x0 + c.r * 4;
+      const cx = x0 - c.r * 2 + ((c.x + t * c.sp) % span + span) % span;
+      ctx.beginPath();
+      ctx.ellipse(cx, c.y, c.r, c.r * 0.35, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + c.r * 0.5, c.y - c.r * 0.15, c.r * 0.6, c.r * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 遠くの丘（2層）
+    const hill = (base, amp, freq, phase, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x0, H);
+      for (let x = x0; x <= x1 + 20; x += 20) {
+        ctx.lineTo(x, base - amp * (0.5 + 0.5 * Math.sin(x * freq + phase)) - amp * 0.4 * Math.sin(x * freq * 2.3 + phase * 2));
+      }
+      ctx.lineTo(x1 + 20, H);
+      ctx.closePath();
+      ctx.fill();
+    };
+    hill(500, 70, 0.004, 1.3, '#a9c6aa');
+    hill(535, 45, 0.007, 4.1, '#8fb68c');
+
+    // 野原（手前ほど濃い）
+    const g = ctx.createLinearGradient(0, 520, 0, H);
+    g.addColorStop(0, '#86b36a');
+    g.addColorStop(1, '#4f8a3c');
+    ctx.fillStyle = g;
+    ctx.fillRect(x0, 528, x1 - x0, H - 528 + 40);
+    // カエルの足元の土
+    const soil = ctx.createRadialGradient(frog.cx, GROUND_Y + 14, 0, frog.cx, GROUND_Y + 14, 300);
+    soil.addColorStop(0, 'rgba(110, 82, 52, 0.85)');
+    soil.addColorStop(0.7, 'rgba(110, 82, 52, 0.4)');
+    soil.addColorStop(1, 'rgba(110, 82, 52, 0)');
+    ctx.fillStyle = soil;
+    ctx.beginPath();
+    ctx.ellipse(frog.cx, GROUND_Y + 14, 300, 58, 0, 0, Math.PI * 2);
+    ctx.fill();
+    void top;
   }
 
-  // 一本脚の丸テーブル（天板は斜め上から見た楕円）。床は画面外で、天板と脚の首だけ見せる
-  function drawTable() {
-    const { cx, rx } = table;
-    const TABLE_RY = tableRy;
-    const top = DESK_Y, bot = DESK_Y + TABLE_THICK;
+  // 地面の水の量から水たまりの大きさを決める
+  function updatePuddle(dt) {
+    let count = 0;
+    for (let i = 0; i < sim.n; i++) if (sim.onFloor[i] && sim.y[i] > GROUND_Y - 10) count++;
+    const target = count ? Math.min(PUDDLE_MAX, 120 + 10 * Math.sqrt(count)) : 0;
+    puddle.rx += (target - puddle.rx) * Math.min(1, dt * 1.5);
+    const now = performance.now() / 1000;
+    puddle.ripples = puddle.ripples.filter((r) => now - r.t < 1.6);
+  }
 
-    // 天板の下の暗がり
-    const sh = ctx.createRadialGradient(cx, bot + TABLE_RY, 0, cx, bot + TABLE_RY, rx);
-    sh.addColorStop(0, 'rgba(0,0,0,0.5)');
-    sh.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = sh;
-    ctx.fillRect(cx - rx, bot, rx * 2, H - bot + 20);
-
-    // 脚の首（画面下へ伸びる柱と、天板を受ける台座）
-    const lg = ctx.createLinearGradient(cx - 30, 0, cx + 30, 0);
-    lg.addColorStop(0, '#3a2213'); lg.addColorStop(0.35, '#8a5732'); lg.addColorStop(1, '#2a180c');
-    ctx.fillStyle = lg;
+  function drawPuddle() {
+    const rx = puddle.rx;
+    if (rx < 4) return;
+    const ry = rx * 0.15, cx = frog.cx, cy = GROUND_Y + 6;
+    // ふちを少し波打たせた楕円
     ctx.beginPath();
-    ctx.moveTo(cx - 70, bot + TABLE_RY - 8);
-    ctx.quadraticCurveTo(cx - 26, bot + TABLE_RY + 4, cx - 24, bot + TABLE_RY + 40);
-    ctx.lineTo(cx - 24, H + 20);
-    ctx.lineTo(cx + 24, H + 20);
-    ctx.lineTo(cx + 24, bot + TABLE_RY + 40);
-    ctx.quadraticCurveTo(cx + 26, bot + TABLE_RY + 4, cx + 70, bot + TABLE_RY - 8);
-    ctx.closePath();
-    ctx.fill();
-    // 首のくびれの飾りリング
-    ctx.fillStyle = 'rgba(30, 16, 8, 0.6)';
-    ctx.fillRect(cx - 25, bot + TABLE_RY + 52, 50, 4);
-    ctx.fillStyle = 'rgba(255, 210, 160, 0.12)';
-    ctx.fillRect(cx - 25, bot + TABLE_RY + 56, 50, 2);
-
-    // 天板の側面（手前側の厚み）
-    const eg = ctx.createLinearGradient(cx - rx, 0, cx + rx, 0);
-    eg.addColorStop(0, '#3a2213'); eg.addColorStop(0.35, '#6b3f22'); eg.addColorStop(1, '#2c190c');
-    ctx.fillStyle = eg;
-    ctx.beginPath();
-    ctx.ellipse(cx, top, rx, TABLE_RY, 0, Math.PI, 0, true);
-    ctx.lineTo(cx + rx, bot);
-    ctx.ellipse(cx, bot, rx, TABLE_RY, 0, 0, Math.PI, false);
-    ctx.closePath();
-    ctx.fill();
-
-    // 天板の上面
-    const tg = ctx.createRadialGradient(cx - rx * 0.3, top - TABLE_RY * 0.5, 0, cx, top, rx * 1.1);
-    tg.addColorStop(0, '#a8703f'); tg.addColorStop(0.6, '#8a5530'); tg.addColorStop(1, '#5e3519');
-    ctx.fillStyle = tg;
-    ctx.beginPath();
-    ctx.ellipse(cx, top, rx, TABLE_RY, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // 木目
-    ctx.strokeStyle = 'rgba(60, 30, 10, 0.18)';
-    ctx.lineWidth = 1;
-    for (let k = 1; k <= 4; k++) {
-      ctx.beginPath();
-      ctx.ellipse(cx + 6 * k, top + 1, rx * (0.2 * k), TABLE_RY * (0.2 * k), 0, 0, Math.PI * 2);
-      ctx.stroke();
+    for (let k = 0; k <= 48; k++) {
+      const a = k / 48 * Math.PI * 2;
+      const r = 1 + 0.05 * Math.sin(a * 3 + 1.7) + 0.03 * Math.sin(a * 7 + 0.4);
+      const px = cx + Math.cos(a) * rx * r, py = cy + Math.sin(a) * ry * r;
+      if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     }
-    // 縁のハイライト
-    ctx.beginPath();
-    ctx.ellipse(cx, top, rx, TABLE_RY, 0, 0.05 * Math.PI, 0.95 * Math.PI);
-    ctx.strokeStyle = 'rgba(255, 215, 170, 0.35)';
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, cy - ry, 0, cy + ry);
+    g.addColorStop(0, 'rgba(200, 230, 248, 0.9)');    // 空の映り込み
+    g.addColorStop(1, 'rgba(120, 175, 220, 0.9)');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(70, 120, 150, 0.45)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-  }
-
-  function draw() {
-    drawBackground();
-    ctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);
-    drawTable();
-    drawGlassBack();
-    drawWater();
-    drawGlassFront();
-    drawClock();
-  }
-
-  // ---------- 水時計 ----------
-  function clockHalfAt(y) {
-    const { top, bot, halfTop, halfBot } = CLOCK;
-    return halfTop + (halfBot - halfTop) * Math.min(1, Math.max(0, (y - top) / (bot - top)));
-  }
-
-  function clockBodyPath() {
-    const { top, bot, halfTop, halfBot } = CLOCK, cx = glass.cx;
-    ctx.beginPath();
-    ctx.moveTo(cx - halfTop, top + 6);
-    ctx.lineTo(cx - halfBot, bot);
-    ctx.quadraticCurveTo(cx - halfBot, bot + 18, cx - 6, bot + 22);
-    ctx.lineTo(cx + 6, bot + 22);
-    ctx.quadraticCurveTo(cx + halfBot, bot + 18, cx + halfBot, bot);
-    ctx.lineTo(cx + halfTop, top + 6);
-    ctx.closePath();
-  }
-
-  function brassGrad(x0, x1) {
-    const g = ctx.createLinearGradient(x0, 0, x1, 0);
-    g.addColorStop(0, '#5a3d14'); g.addColorStop(0.3, '#e2bd68'); g.addColorStop(0.55, '#a9802f'); g.addColorStop(1, '#4a3210');
-    return g;
-  }
-
-  function drawClock() {
-    const { top, bot, halfTop, nozzleY } = CLOCK, cx = glass.cx;
-    const t = performance.now() / 1000;
-
-    // 吊り下げ金具
-    ctx.strokeStyle = '#8a6a30';
-    ctx.lineWidth = 2;
-    for (const sx of [-34, 34]) {
+    // 波紋
+    const now = performance.now() / 1000;
+    for (const r of puddle.ripples) {
+      const age = now - r.t;
+      if (age < 0) continue;
+      const rr = 6 + age * 34;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.7 * (1 - age / 1.6)})`;
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.moveTo(cx + sx * 0.6, -view.oy / view.s - 2);   // 画面の上端から吊るす
-      ctx.lineTo(cx + sx, top + 2);
+      ctx.ellipse(r.x, cy + r.dy, rr, rr * 0.22, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
+  }
 
-    // 水槽の水（経過時間とともに水位が下がる）
-    const zeroY = top + 17;    // 目盛り0（満水）の位置
-    const usable = bot - zeroY;
-    const levelY = Math.min(bot + 15, zeroY + usable * playSec / (CLOCK_MINUTES * 60));
-    ctx.save();
-    clockBodyPath();
-    ctx.clip();
-    const wg = ctx.createLinearGradient(0, levelY, 0, bot + 22);
-    wg.addColorStop(0, 'rgba(110, 185, 245, 0.75)');
-    wg.addColorStop(1, 'rgba(40, 110, 200, 0.85)');
-    ctx.fillStyle = wg;
-    ctx.beginPath();
-    const hw = halfTop + 4;
-    ctx.moveTo(cx - hw, levelY);
-    for (let x = -hw; x <= hw; x += 4) {
-      ctx.lineTo(cx + x, levelY + Math.sin(x * 0.22 - t * 9) * ripple * 1.6);
+  // 頭から流れ落ちた水が水たまりに落ちるあたりに波紋を出す
+  function addRipples() {
+    if (puddle.rx < 150) return;
+    const now = performance.now() / 1000;
+    for (const sgn of [-1, 1]) {
+      puddle.ripples.push({ x: frog.cx + sgn * (125 + Math.random() * 20), dy: 4 + Math.random() * 8, t: now + 0.35 + Math.random() * 0.2 });
     }
-    ctx.lineTo(cx + hw, bot + 30);
-    ctx.lineTo(cx - hw, bot + 30);
+  }
+
+  // 手前の草むら
+  function drawGrass() {
+    const t = performance.now() / 1000;
+    ctx.lineCap = 'round';
+    for (const tf of scenery.tufts) {
+      const sway = Math.sin(t * 1.3 + tf.x * 0.05) * 2;
+      ctx.strokeStyle = tf.hue < 0.5 ? '#3f7a31' : '#5a9440';
+      ctx.lineWidth = 2.2;
+      for (let k = 0; k < tf.n; k++) {
+        const dx = (k - (tf.n - 1) / 2) * 4;
+        ctx.beginPath();
+        ctx.moveTo(tf.x + dx, tf.y);
+        ctx.quadraticCurveTo(tf.x + dx * 1.5, tf.y - tf.h * 0.6, tf.x + dx * 2.2 + sway, tf.y - tf.h);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // ---------- 葉っぱ ----------
+  function leafTip() {
+    return [leaf.px + Math.cos(leaf.angle) * leaf.len, leaf.py + Math.sin(leaf.angle) * leaf.len];
+  }
+
+  // しずくの重みでしなり、離れるとばねのように跳ね返る
+  function updateLeaf(dt, prog) {
+    const target = leaf.full - LEAF_DROOP * (1 - prog);
+    const k = 160, damp = 7;
+    leaf.vel += (k * (target - leaf.angle) - damp * leaf.vel) * dt;
+    leaf.angle += leaf.vel * dt;
+  }
+
+  function leafShape(L, wdt) {
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(L * 0.25, -wdt, L * 0.7, -wdt * 0.85, L, 0);
+    ctx.bezierCurveTo(L * 0.7, wdt * 0.85, L * 0.25, wdt, 0, 0);
     ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(210, 238, 255, 0.8)';
-    ctx.lineWidth = 1.2;
+  }
+
+  function drawLeaf(prog) {
+    const top = -view.oy / view.s;
+    const t = performance.now() / 1000;
+    // 枝（画面の左上から）
+    ctx.strokeStyle = '#6b4a2b';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 9;
     ctx.beginPath();
-    for (let x = -hw; x <= hw; x += 4) {
-      const yy = levelY + Math.sin(x * 0.22 - t * 9) * ripple * 1.6;
-      if (x === -hw) ctx.moveTo(cx + x, yy); else ctx.lineTo(cx + x, yy);
-    }
+    ctx.moveTo(leaf.px - 330, top - 10);
+    ctx.quadraticCurveTo(leaf.px - 150, top + 40, leaf.px - 26, leaf.py - 14);
     ctx.stroke();
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(leaf.px - 200, top + 22);
+    ctx.quadraticCurveTo(leaf.px - 230, top + 70, leaf.px - 280, top + 95);
+    ctx.stroke();
+
+    // 飾りの葉（ゆれるだけ）
+    const deco = (x, y, ang, L, wdt) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ang + Math.sin(t * 1.1 + x) * 0.03);
+      leafShape(L, wdt);
+      ctx.fillStyle = '#4f8f3a';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30, 70, 20, 0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(L * 0.95, 0);
+      ctx.stroke();
+      ctx.restore();
+    };
+    deco(leaf.px - 280, top + 95, 2.2, 110, 26);
+    deco(leaf.px - 120, top + 28, -0.5, 120, 30);
+
+    // しずくを落とす葉
+    ctx.save();
+    ctx.translate(leaf.px, leaf.py);
+    ctx.rotate(leaf.angle);
+    const L = leaf.len;
+    ctx.strokeStyle = '#4c6b2a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-28, -12); ctx.lineTo(0, 0);
+    ctx.stroke();
+    leafShape(L, 46);
+    const lg = ctx.createLinearGradient(0, -40, 0, 40);
+    lg.addColorStop(0, '#7cc25a');
+    lg.addColorStop(1, '#3e8a35');
+    ctx.fillStyle = lg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(40, 90, 30, 0.6)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 葉脈
+    ctx.strokeStyle = 'rgba(220, 240, 190, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(L * 0.97, 0);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    for (let k = 1; k <= 5; k++) {
+      const vx = L * k / 6.5;
+      for (const sgn of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(vx, 0);
+        ctx.quadraticCurveTo(vx + 14, sgn * 14, vx + 26, sgn * 26 * (1 - k / 7));
+        ctx.stroke();
+      }
+    }
+    // 雨上がりのつや
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.beginPath();
+    ctx.ellipse(L * 0.35, -14, 30, 5, -0.1, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
 
-    // ガラス
-    clockBodyPath();
-    ctx.fillStyle = 'rgba(200, 230, 255, 0.07)';
+    // 葉先でふくらむしずく（次に落ちるまでの進み具合で大きくなる）
+    const [tx, ty] = leafTip();
+    const r = (3 + dropSize * 0.55) * (0.3 + 0.7 * prog);
+    const dy = ty + r * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(tx - 2, ty);
+    ctx.quadraticCurveTo(tx - r * 0.5, ty + r * 0.15, tx - r, dy);
+    ctx.arc(tx, dy, r, Math.PI, 0, true);
+    ctx.quadraticCurveTo(tx + r * 0.5, ty + r * 0.15, tx + 2, ty);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(185, 225, 250, 0.9)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(225, 240, 255, 0.7)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(70, 135, 200, 0.8)';
+    ctx.lineWidth = 1.2;
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(cx - halfTop + 8, top + 14);
-    ctx.lineTo(cx - clockHalfAt(bot - 10) + 8, bot - 10);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    ctx.arc(tx - r * 0.35, dy - r * 0.3, Math.max(0.8, r * 0.2), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.fill();
+  }
 
-    // 目盛り（分）
-    ctx.font = '9px system-ui, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    for (let k = 0; k <= 6; k++) {
-      const y = zeroY + usable * k / 6;
-      const x = cx + clockHalfAt(y);
-      ctx.strokeStyle = 'rgba(235, 215, 160, 0.75)';
-      ctx.lineWidth = 1;
+  // ---------- カエル ----------
+  function frogBodyPath() {
+    const L = frog.left, R = frog.right;
+    ctx.beginPath();
+    ctx.moveTo(L[0][0], L[0][1]);
+    for (let i = 1; i < L.length; i++) ctx.lineTo(L[i][0], L[i][1]);
+    for (let i = R.length - 2; i >= 0; i--) ctx.lineTo(R[i][0], R[i][1]);
+    ctx.closePath();
+  }
+
+  // squint: 0 = ぱっちり, 1 = 閉じる
+  function drawEye(ex, ey, squint, lookX) {
+    const rs = 30, r = 21;
+    // 目の土台（頭から出っぱった部分）
+    ctx.beginPath();
+    ctx.arc(ex, ey, rs, 0, Math.PI * 2);
+    const sg = ctx.createRadialGradient(ex - 8, ey - 10, 2, ex, ey, rs);
+    sg.addColorStop(0, '#8fd36a');
+    sg.addColorStop(1, '#4c9a3c');
+    ctx.fillStyle = sg;
+    ctx.fill();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(ex, ey, r, 0, Math.PI * 2);
+    ctx.clip();
+    // 白目・虹彩・横長の瞳
+    ctx.fillStyle = '#f7f3d2';
+    ctx.fillRect(ex - r, ey - r, r * 2, r * 2);
+    ctx.beginPath();
+    ctx.arc(ex + lookX, ey + 1, 15, 0, Math.PI * 2);
+    ctx.fillStyle = '#d9a52a';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(ex + lookX, ey + 1, 10, 5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#1d1a12';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(ex + lookX - 5, ey - 5, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fill();
+    // まぶた（上から大きく、下から少し閉じて目を細める）
+    const upper = ey - r + r * 1.15 * squint;
+    const lower = ey + r - r * 0.75 * squint;
+    ctx.fillStyle = '#5fae47';
+    ctx.beginPath();
+    ctx.moveTo(ex - r - 2, ey - r - 2);
+    ctx.lineTo(ex + r + 2, ey - r - 2);
+    ctx.lineTo(ex + r + 2, upper);
+    ctx.quadraticCurveTo(ex, upper + 6 * squint, ex - r - 2, upper);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(ex - r - 2, ey + r + 2);
+    ctx.lineTo(ex + r + 2, ey + r + 2);
+    ctx.lineTo(ex + r + 2, lower);
+    ctx.quadraticCurveTo(ex, lower - 4 * squint, ex - r - 2, lower);
+    ctx.closePath();
+    ctx.fill();
+    if (squint > 0.05) {
+      ctx.strokeStyle = 'rgba(30, 70, 25, 0.8)';
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(x - (k % 2 ? 6 : 11), y);
-      ctx.lineTo(x - 1, y);
+      ctx.moveTo(ex - r, upper);
+      ctx.quadraticCurveTo(ex, upper + 6 * squint, ex + r, upper);
       ctx.stroke();
-      if (k % 2 === 0) {
-        ctx.fillStyle = 'rgba(235, 215, 160, 0.75)';
-        ctx.fillText(String(k * 5), x - 13, y);
+    }
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(ex, ey, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(40, 90, 30, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  function drawFrog(squint) {
+    const { cx } = frog, gy = GROUND_Y, top = frog.headTopY;
+    ctx.save();
+    // 当たった瞬間に少しつぶれる（見た目だけ）
+    const sq = squint * 0.035;
+    ctx.translate(cx, gy);
+    ctx.scale(1 + sq, 1 - sq);
+    ctx.translate(-cx, -gy);
+
+    // 影
+    ctx.fillStyle = 'rgba(40, 50, 20, 0.3)';
+    ctx.beginPath();
+    ctx.ellipse(cx, gy + 6, 150, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 後ろ足（体の横に折りたたんだ太もも + 足先）
+    for (const sgn of [-1, 1]) {
+      ctx.fillStyle = '#4a9238';
+      ctx.beginPath();
+      ctx.ellipse(cx + sgn * 98, gy - 30, 46, 32, sgn * -0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#5aa243';
+      ctx.beginPath();
+      ctx.ellipse(cx + sgn * 128, gy - 4, 34, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      for (let k = 0; k < 3; k++) {
+        ctx.beginPath();
+        ctx.arc(cx + sgn * (150 + k * 6), gy - 6 + k * 3, 5, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
-    // 真鍮の蓋・ノズル・コック
-    ctx.fillStyle = brassGrad(cx - halfTop - 6, cx + halfTop + 6);
-    ctx.fillRect(cx - halfTop - 6, top, (halfTop + 6) * 2, 9);
-    ctx.fillStyle = brassGrad(cx - 8, cx + 8);
-    ctx.fillRect(cx - 8, bot + 19, 16, 7);
-    ctx.fillStyle = brassGrad(cx - 4, cx + 4);
-    ctx.fillRect(cx - 3.5, bot + 26, 7, nozzleY - bot - 30);
-    ctx.fillStyle = brassGrad(cx - 5, cx + 5);
-    ctx.fillRect(cx - 5, nozzleY - 5, 10, 5);
-    ctx.fillStyle = brassGrad(cx + 3, cx + 19);
-    ctx.fillRect(cx + 3, bot + 31, 12, 4);
-    ctx.beginPath();
-    ctx.arc(cx + 17, bot + 33, 4, 0, Math.PI * 2);
+    // 胴体（当たり判定と同じ輪郭）
+    frogBodyPath();
+    const bg = ctx.createRadialGradient(cx - 30, top + 40, 10, cx, gy - 50, 150);
+    bg.addColorStop(0, '#93d36d');
+    bg.addColorStop(0.7, '#62b049');
+    bg.addColorStop(1, '#3f8a34');
+    ctx.fillStyle = bg;
     ctx.fill();
 
-    // ノズルの先でふくらむ水滴（次に落ちるまでの進み具合で大きくなる）
-    let prog = 0.25;
-    if (running && actx && nextSpawnT > lastSpawnT) {
-      prog = Math.min(1, Math.max(0, (audioNow() - lastSpawnT) / (nextSpawnT - lastSpawnT)));
+    // おなか
+    ctx.fillStyle = 'rgba(232, 240, 182, 0.9)';
+    ctx.beginPath();
+    ctx.ellipse(cx, gy - 38, 64, 40, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 前足
+    for (const sgn of [-1, 1]) {
+      ctx.strokeStyle = '#4f9a3c';
+      ctx.lineWidth = 15;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx + sgn * 52, gy - 62);
+      ctx.quadraticCurveTo(cx + sgn * 66, gy - 30, cx + sgn * 58, gy - 6);
+      ctx.stroke();
+      ctx.fillStyle = '#5aa243';
+      for (let k = -1; k <= 1; k++) {
+        ctx.beginPath();
+        ctx.arc(cx + sgn * 58 + k * 8, gy - 3, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
-    const r = (3 + dropSize * 0.55) * (0.3 + 0.7 * prog);
-    const dy = nozzleY + r * 0.95;
+
+    // ほっぺ・鼻・口
+    ctx.fillStyle = 'rgba(240, 140, 140, 0.35)';
+    for (const sgn of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + sgn * 62, top + 78, 13, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(30, 60, 25, 0.7)';
+    for (const sgn of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(cx + sgn * 9, top + 45, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(30, 65, 25, 0.85)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(cx - 2.5, nozzleY);
-    ctx.quadraticCurveTo(cx - r * 0.5, nozzleY + r * 0.15, cx - r, dy);
-    ctx.arc(cx, dy, r, Math.PI, 0, true);
-    ctx.quadraticCurveTo(cx + r * 0.5, nozzleY + r * 0.15, cx + 2.5, nozzleY);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(100, 180, 245, 0.85)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(210, 238, 255, 0.7)';
-    ctx.lineWidth = 1;
+    ctx.moveTo(cx - 58, top + 66);
+    ctx.quadraticCurveTo(cx, top + 92 - squint * 6, cx + 58, top + 66);
     ctx.stroke();
+
+    // 体のつや
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(cx - r * 0.35, dy - r * 0.3, Math.max(0.8, r * 0.18), 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.fill();
+    ctx.arc(cx, gy - 10, 112, Math.PI * 1.12, Math.PI * 1.3);
+    ctx.stroke();
+
+    // 目（頭の上に出っぱる）。しずくの方を少し見上げる
+    drawEye(cx - 50, top + 10, squint, 3);
+    drawEye(cx + 50, top + 10, squint, -3);
+    ctx.restore();
+  }
+
+  function eyeSquint() {
+    let s = 0;
+    if (actx) {
+      const age = audioNow() - hitAt;
+      if (age >= 0 && age < 1.5) s = hitPeak * (age < 0.05 ? age / 0.05 : Math.exp(-(age - 0.05) / 0.18));
+    }
+    // ときどきまばたき
+    const t = performance.now() / 1000;
+    if (t > blinkAt) {
+      const b = t - blinkAt;
+      if (b < 0.16) s = Math.max(s, Math.sin(b / 0.16 * Math.PI));
+      else blinkAt = t + 3 + Math.random() * 5;
+    }
+    return Math.max(s, forcedSquint);
+  }
+
+  function dropProgress() {
+    if (running && actx && nextSpawnT > lastSpawnT) {
+      return Math.min(1, Math.max(0, (audioNow() - lastSpawnT) / (nextSpawnT - lastSpawnT)));
+    }
+    return 0.3;
+  }
+
+  let forcedSquint = 0;   // 確認用（?squint=0.6）
+  function draw(dt) {
+    const prog = dropProgress();
+    updateLeaf(dt, prog);
+    updatePuddle(dt);
+    drawBackground();
+    ctx.setTransform(view.s, 0, 0, view.s, view.ox, view.oy);
+    drawPuddle();
+    drawFrog(eyeSquint());
+    drawWater();
+    drawLeaf(prog);
+    drawGrass();
   }
 
   // ---------- UI ----------
@@ -637,15 +814,8 @@
   let statusTimer = 0;
   function updateStatus() {
     if (++statusTimer % 10) return;
-    let text;
-    if (sim.baseY <= glass.rimY + 6) text = 'グラスは水の底に…';
-    else if (sim.baseY < sim.floorY - 0.5) text = `床の水 ${Math.round(sim.floorY - sim.baseY)}mm`;
-    else {
-      const fill = Math.min(100, Math.round(sim.countInBowl() / bowlCapacity * 100));
-      text = fill >= 90 && sim.n - sim.countInBowl() > 30 ? 'あふれています' : `グラス ${fill}%`;
-    }
     const m = Math.floor(playSec / 60), sec = Math.floor(playSec % 60);
-    $('status').textContent = `${text} ・ 経過 ${m}:${String(sec).padStart(2, '0')}`;
+    $('status').textContent = `しずく ${dropCount}滴 ・ 経過 ${m}:${String(sec).padStart(2, '0')}`;
   }
 
   function setBpm(v) {
@@ -690,7 +860,7 @@
     $('volVal').textContent = e.target.value;
     if (master) master.gain.value = volume;
   };
-  $('reset').onclick = () => { sim.reset(); playSec = 0; };
+  $('reset').onclick = () => { sim.reset(); playSec = 0; dropCount = 0; };
   const panel = $('panel');
   function closePanel() {
     panel.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
@@ -756,16 +926,16 @@
   let last = performance.now(), acc = 0;
   function frame(ts) {
     const dt = Math.min(0.1, (ts - last) / 1000);
+    last = ts;
     acc += dt;
     if (running) playSec += dt;
-    ripple *= 0.95;
-    last = ts;
     let steps = 0;
     while (acc >= 1 / STEP_HZ && steps < 8) { sim.step(); acc -= 1 / STEP_HZ; steps++; }
     if (steps === 8) acc = 0;
     sim.manage(MAX_PARTICLES);
+    sim.soak(0.0015, frog.cx, Math.max(140, puddle.rx));
     processSpawns();
-    draw();
+    draw(dt);
     updateDots();
     updateStatus();
     requestAnimationFrame(frame);
@@ -775,15 +945,17 @@
   buildDots();
   const qs = new URLSearchParams(location.search);
   if (qs.has('bpm')) setBpm(+qs.get('bpm'));
+  if (qs.has('squint')) forcedSquint = +qs.get('squint');
   if (qs.has('autostart')) toggle();
-  if (qs.has('prefill')) {   // 確認用: 指定秒数ぶん水滴を落とした状態から始める
+  if (qs.has('prefill')) {   // 確認用: 指定秒数ぶんしずくを落とした状態から始める
     const per = Math.round(STEP_HZ * 60 / bpm);
     for (let s = 0; s < STEP_HZ * +qs.get('prefill'); s++) {
-      if (s % per === 0) sim.spawnDrop(glass.cx, spawnY(), dropSize, SPAWN_VY);
+      if (s % per === 0) sim.spawnDrop(frog.cx, spawnY(), dropSize, SPAWN_VY);
       sim.step();
-      if (s % 3 === 0) sim.manage(MAX_PARTICLES);
+      if (s % 3 === 0) { sim.manage(MAX_PARTICLES); sim.soak(0.0015, frog.cx, Math.max(140, puddle.rx)); }
     }
     playSec = +qs.get('prefill');
+    for (let k = 0; k < 20; k++) updatePuddle(0.2);
   }
   requestAnimationFrame(frame);
 })();

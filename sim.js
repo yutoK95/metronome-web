@@ -17,28 +17,24 @@
     killY: Infinity, // これより下（画面外）に落ちた粒子はすぐプールに変換する
   };
 
-  // ワイングラスの形状。y は下向き。
-  function makeGlass(cx, deskY) {
-    const stemH = 150, bowlH = 150, R = 72;
-    const bottomY = deskY - stemH;
-    const rimY = bottomY - bowlH;
-    const hwAt = (t) => {
-      if (t <= 0) return 0;
-      if (t >= 1) t = 1;
-      if (t < 0.6) { const u = 1 - t / 0.6; return R * Math.sqrt(1 - u * u); }
-      const u = (t - 0.6) / 0.4;
-      return R * (1 - 0.1 * u * u);
+  // カエルの体の輪郭（正面から見た姿）。y は下向き。
+  // 水が当たる・流れ落ちる面だけを当たり判定にする（目の出っぱりは見た目だけ）
+  function makeFrog(cx, groundY) {
+    const height = 140, halfW = 110;
+    // 地面からの高さ h における体の半分の幅
+    const halfAt = (h) => {
+      if (h <= 0) return halfW;
+      if (h >= height) return 0;
+      return halfW * Math.sqrt(1 - Math.pow(h / height, 3));
     };
-    const hwAtY = (y) => hwAt((bottomY - y) / bowlH);
-
-    const N = 22;
+    const N = 24;
     const left = [], right = [];
     for (let i = 0; i <= N; i++) {
-      const t = 1 - Math.cos((i / N) * Math.PI / 2);
-      const y = bottomY - t * bowlH, hw = hwAt(t);
-      left.push([cx - hw, y]);
-      right.push([cx + hw, y]);
+      const h = height * Math.sin((i / N) * Math.PI / 2);   // 頭のてっぺん付近を細かく
+      left.push([cx - halfAt(h), groundY - h]);
+      right.push([cx + halfAt(h), groundY - h]);
     }
+    left[N] = right[N] = [cx, groundY - height];
 
     const segs = [];
     const add = (a, b, half) => {
@@ -48,27 +44,25 @@
       segs.push({ ax: a[0], ay: a[1], tx, ty, nx: -ty, ny: tx, len, half });
     };
     for (let i = 0; i < N; i++) {
-      add(left[i], left[i + 1], 1.5);
-      add(right[i], right[i + 1], 1.5);
+      add(left[i], left[i + 1], 2);
+      add(right[i], right[i + 1], 2);
     }
-    // ステムと台座は立体的には水が回り込めるので、2D では当たり判定を付けない
-
-    let area = 0;
-    for (let i = 0; i < 200; i++) area += 2 * Math.max(0, hwAt((i + 0.5) / 200) - 4) * bowlH / 200;
 
     return {
-      cx, deskY, bottomY, rimY, bowlH, R, stemH, hwAt, hwAtY, left, right, segs,
-      rimHW: hwAt(1), area,
-      inBowl(x, y) { return y > rimY && y < bottomY && Math.abs(x - cx) < hwAtY(y); },
-      bbox: { x0: cx - R - 12, x1: cx + R + 12, y0: rimY - 12, y1: bottomY + 12 },
+      cx, groundY, height, halfW, halfAt, left, right, segs,
+      headTopY: groundY - height,
+      rimY: -Infinity,                 // 器ではないので水没判定は使わない
+      inBowl() { return false; },
+      bbox: { x0: cx - halfW - 12, x1: cx + halfW + 12, y0: groundY - height - 12, y1: groundY + 4 },
     };
   }
 
   class Sim {
-    // table: 丸テーブルの天板 { x0, x1, top, bottom }。天板の外にこぼれた水は床 (floorY) に落ちる
-    constructor({ W, H, floorY, table, glass, cap = 4000, params = {} }) {
+    // body: 水が当たる物体（輪郭の線分 segs と、器なら inBowl / rimY を持つ）
+    // table: 台の天板 { x0, x1, top, bottom }（省略可）。天板の外にこぼれた水は床 (floorY) に落ちる
+    constructor({ W, H, floorY, table = null, body, cap = 4000, params = {} }) {
       Object.assign(this, DEFAULTS, params);
-      this.W = W; this.H = H; this.floorY = floorY; this.table = table; this.glass = glass; this.cap = cap;
+      this.W = W; this.H = H; this.floorY = floorY; this.table = table; this.body = body; this.cap = cap;
       this.x = new Float32Array(cap); this.y = new Float32Array(cap);
       this.px = new Float32Array(cap); this.py = new Float32Array(cap);
       this.vx = new Float32Array(cap); this.vy = new Float32Array(cap);
@@ -106,10 +100,10 @@
       }
     }
 
-    // グラスの壁に近い粒子について、最も近い壁面までの距離と法線を求める
+    // 物体の壁に近い粒子について、最も近い壁面までの距離と法線を求める
     wallDistances() {
-      const { n, x, y, wd, wnx, wny, h, glass } = this;
-      const segs = glass.segs, bb = glass.bbox;
+      const { n, x, y, wd, wnx, wny, h, body } = this;
+      const segs = body.segs, bb = body.bbox;
       for (let i = 0; i < n; i++) {
         wd[i] = 1e9;
         const xi = x[i], yi = y[i];
@@ -117,7 +111,7 @@
         for (let s = 0; s < segs.length; s++) {
           const sg = segs[s];
           const u = (xi - sg.ax) * sg.tx + (yi - sg.ay) * sg.ty;
-          if (u < 0 || u > sg.len) continue;   // 端点（グラスの縁）では支えない
+          if (u < 0 || u > sg.len) continue;   // 線分の端点では支えない
           const dx = xi - (sg.ax + sg.tx * u), dy = yi - (sg.ay + sg.ty * u);
           const d = Math.hypot(dx, dy);
           if (d - sg.half < wd[i] && d > 1e-6) { wd[i] = d - sg.half; wnx[i] = dx / d; wny[i] = dy / d; }
@@ -277,16 +271,16 @@
     }
 
     collide() {
-      const { n, x, y, px, py, pr, W, glass } = this;
-      const segs = glass.segs, bb = glass.bbox, m = pr + 6;
-      const submerged = this.baseY <= glass.rimY + 6;
-      const tb = this.table, tableDry = this.baseY > tb.top;
+      const { n, x, y, px, py, pr, W, body } = this;
+      const segs = body.segs, bb = body.bbox, m = pr + 6;
+      const submerged = this.baseY <= body.rimY + 6;
+      const tb = this.table, tableDry = !!tb && this.baseY > tb.top;
 
       for (let i = 0; i < n; i++) {
         let xi = x[i], yi = y[i], cnx = 0, cny = 0;
 
-        // 床（床 or 溜まった水のプール）。水没前のグラスの中はプールの影響を受けない
-        const floor = !submerged && glass.inBowl(xi, yi) ? this.floorY : this.baseY;
+        // 床（床 or 溜まった水のプール）。水没前の器の中はプールの影響を受けない
+        const floor = !submerged && body.inBowl(xi, yi) ? this.floorY : this.baseY;
         this.onFloor[i] = yi > floor - pr - 1.5 ? 1 : 0;
         if (yi > floor - pr) {
           yi = floor - pr;
@@ -312,7 +306,7 @@
         // 左右の壁
         if (xi < pr) xi = pr; else if (xi > W - pr) xi = W - pr;
 
-        // グラス
+        // 物体（カエルなど）
         if (xi > bb.x0 - m && xi < bb.x1 + m && yi > bb.y0 - m && yi < bb.y1 + m) {
           const p0x = px[i], p0y = py[i];
           for (let s = 0; s < segs.length; s++) {
@@ -355,16 +349,16 @@
 
     // 粒子数が多くなったら、底の粒子を静的な「プール」に変換して水位を上げる
     manage(maxN, maxRemove = 30) {
-      const { x, y, glass, mark } = this;
+      const { x, y, body, mark } = this;
       const n = this.n;
-      const submerged = this.baseY <= glass.rimY + 6;
+      const submerged = this.baseY <= body.rimY + 6;
       const poolActive = this.baseY < this.floorY - 0.5;
       mark.fill(0, 0, n);
       let removed = 0;
 
       if (poolActive) {
         for (let i = 0; i < n; i++) {
-          if (y[i] > this.baseY + this.pr && (submerged || !glass.inBowl(x[i], y[i]))) { mark[i] = 1; removed++; }
+          if (y[i] > this.baseY + this.pr && (submerged || !body.inBowl(x[i], y[i]))) { mark[i] = 1; removed++; }
         }
       }
       for (let i = 0; i < n; i++) {
@@ -374,7 +368,7 @@
       if (excess > 0) {
         const cand = [];
         for (let i = 0; i < n; i++) {
-          if (!mark[i] && (submerged || !glass.inBowl(x[i], y[i]))) cand.push(i);
+          if (!mark[i] && (submerged || !body.inBowl(x[i], y[i]))) cand.push(i);
         }
         cand.sort((a, b) => y[b] - y[a]);
         const take = Math.min(excess, maxRemove, cand.length);
@@ -396,14 +390,33 @@
       this.baseY = Math.max(this.topLimit, this.baseY - removed * this.areaPer / this.W);
     }
 
-    countInBowl() {
-      let c = 0;
-      for (let i = 0; i < this.n; i++) if (this.glass.inBowl(this.x[i], this.y[i])) c++;
-      return c;
+    // 地面に落ちた水を少しずつ土に染み込ませる（水たまりが一定の大きさで落ち着く）
+    // cx, rx: 水たまりの中心と半径。そこから外れた水は早く染み込む
+    soak(prob, cx = 0, rx = Infinity) {
+      const { x, y, mark, onFloor } = this;
+      const n = this.n, limit = this.floorY - this.pr - 2;
+      let removed = 0;
+      for (let i = 0; i < n; i++) {
+        const p = Math.abs(x[i] - cx) < rx ? prob : prob * 20;
+        mark[i] = onFloor[i] && y[i] > limit && Math.random() < p ? 1 : 0;
+        removed += mark[i];
+      }
+      if (!removed) return;
+      let w = 0;
+      for (let i = 0; i < n; i++) {
+        if (mark[i]) continue;
+        if (w !== i) {
+          this.x[w] = this.x[i]; this.y[w] = this.y[i];
+          this.vx[w] = this.vx[i]; this.vy[w] = this.vy[i];
+          this.rho[w] = this.rho[i]; this.onFloor[w] = this.onFloor[i]; this.seed[w] = this.seed[i];
+        }
+        w++;
+      }
+      this.n = w;
     }
   }
 
-  const api = { Sim, makeGlass, DEFAULTS };
+  const api = { Sim, makeFrog, DEFAULTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FluidSim = api;
 })(typeof window !== 'undefined' ? window : globalThis);
