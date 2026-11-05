@@ -10,6 +10,43 @@
   const SPAWN_VY = 0.5;      // しずくが離れるときの初速
 
   const $ = (id) => document.getElementById(id);
+
+  // ---------- 言語（日本語 / 英語） ----------
+  const I18N = {
+    ja: {
+      title: 'しずくメトロノーム', tap: 'タップ', scene: 'シーン', sceneGlass: 'グラスと天井', sceneFrog: 'カエルと葉っぱ',
+      beats: '拍子', beatsNone: 'なし', beatsN: '{n}拍', dropSize: 'しずくの大きさ', volume: '音量',
+      reset: '最初からやり直す', hint: 'Space: スタート/ストップ　↑↓: BPM　T: タップ',
+      close: 'メニューを閉じる', open: 'メニューを開く', start: '▶ スタート', stop: '■ ストップ',
+      status: 'しずく {n}滴 ・ 経過 {time}',
+      glassUnder: 'グラスは水の底に…', floorWater: '床の水 {n}mm', overflowing: 'あふれています', glassFill: 'グラス {n}%',
+    },
+    en: {
+      title: 'Drip Metronome', tap: 'Tap', scene: 'Scene', sceneGlass: 'Glass & ceiling', sceneFrog: 'Frog & leaf',
+      beats: 'Beats', beatsNone: 'None', beatsN: '{n} beats', dropSize: 'Drop size', volume: 'Volume',
+      reset: 'Start over', hint: 'Space: start/stop　↑↓: BPM　T: tap',
+      close: 'Close menu', open: 'Open menu', start: '▶ Start', stop: '■ Stop',
+      status: '{n} drops · {time}',
+      glassUnder: 'The glass is under water…', floorWater: 'Floor water {n}mm', overflowing: 'Overflowing', glassFill: 'Glass {n}%',
+    },
+  };
+  let lang = 'ja';
+  const t = (key, params = {}) => (I18N[lang][key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k]);
+
+  function applyLang(l) {
+    lang = I18N[l] ? l : 'ja';
+    document.documentElement.lang = lang;
+    document.title = t('title');
+    for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n, { n: el.dataset.n });
+    for (const el of document.querySelectorAll('[data-i18n-label]')) {
+      el.title = t(el.dataset.i18nLabel);
+      el.setAttribute('aria-label', el.title);
+    }
+    $('lang').setAttribute('aria-checked', String(lang === 'en'));
+    updatePlayLabel();
+    statusTimer = -1;
+    try { localStorage.setItem('metronome.lang', lang); } catch (e) { /* 保存できなくても動作は続ける */ }
+  }
   const canvas = $('c');
   const ctx = canvas.getContext('2d');
 
@@ -28,6 +65,8 @@
     get dropSize() { return dropSize; },
     get running() { return running; },
     hasAudio: () => !!actx,
+    t: (key, params) => t(key, params),
+    screenTop: () => -view.oy / view.s,   // 画面の上端のワールド y 座標
     audioNow: () => (actx ? audioNow() : 0),
   };
 
@@ -38,12 +77,11 @@
     const cfg = scene.init(W);
     sim = new FluidSim.Sim({ W, H, floorY: cfg.floorY, table: cfg.table || null, body: cfg.body, cap: 4000, params: cfg.params || {} });
     scene.attach(sim);
-    setupField();
     resize();
   }
 
   function setScene(name) {
-    if (!window.Scenes[name]) name = 'frog';
+    if (!window.Scenes[name]) name = 'glass';
     scene = window.Scenes[name](app);
     initWorld();
     $('scene').value = name;
@@ -58,6 +96,9 @@
     view.s = Math.min(canvas.width / W, canvas.height / H);
     view.ox = (canvas.width - W * view.s) / 2;
     view.oy = canvas.height - H * view.s;   // 地面・床が画面の下端に来るように下揃え
+    // 下揃えで画面の上に余白ができる分も、しずくが見えるように水の描画範囲に含める
+    const top = Math.floor(Math.min(0, -view.oy / view.s));
+    if (sim && (top !== fieldTop || !fCan)) { fieldTop = top; setupField(); }
   }
   addEventListener('resize', resize);
 
@@ -241,8 +282,9 @@
 
   // ---------- 水の描画 ----------
   let fw, fh, fCan, fCtx, oCan, oCtx, outImg, sprite, spriteR, rowCol;
+  let fieldTop = 0;   // 水の描画範囲の上端（ワールド y）
   function setupField() {
-    fw = Math.ceil(W * FS); fh = Math.ceil(H * FS);
+    fw = Math.ceil(W * FS); fh = Math.ceil((H - fieldTop) * FS);
     fCan = document.createElement('canvas'); fCan.width = fw; fCan.height = fh;
     fCtx = fCan.getContext('2d', { willReadFrequently: true });
     oCan = document.createElement('canvas'); oCan.width = fw; oCan.height = fh;
@@ -278,7 +320,7 @@
     const rho0 = sim.rho0;
     for (let i = 0; i < n; i++) {
       const cx = x[i] * FS;
-      let cy = y[i] * FS;
+      let cy = (y[i] - fieldTop) * FS;
       if (cy < -2 * spriteR || cy > fh + spriteR) continue;
       // 周りに粒子が少ない（しぶき・しずく）ほど小さく描いて、ボール感を減らす
       const d = Math.min(1, rho[i] / rho0);
@@ -288,7 +330,7 @@
       if (custom === false) continue;
       if (custom) {
         a = custom.a; b = custom.b;
-        if (custom.y !== undefined) cy = custom.y * FS;
+        if (custom.y !== undefined) cy = (custom.y - fieldTop) * FS;
       } else if (onFloor[i]) {
         a = size * 2.0; b = size * 0.5;   // 床の水は横に平たく
       } else {
@@ -306,7 +348,7 @@
     fCtx.setTransform(1, 0, 0, 1, 0, 0);
     if (scene.drawPool && sim.baseY < H) {
       fCtx.fillStyle = '#fff';
-      fCtx.fillRect(0, sim.baseY * FS, fw, (H - sim.baseY) * FS + 2);
+      fCtx.fillRect(0, (sim.baseY - fieldTop) * FS, fw, (H - sim.baseY) * FS + 2);
     }
 
     const src = fCtx.getImageData(0, 0, fw, fh).data;
@@ -330,7 +372,7 @@
     }
     oCtx.putImageData(outImg, 0, 0);
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(oCan, 0, 0, fw / FS, fh / FS);
+    ctx.drawImage(oCan, 0, fieldTop, fw / FS, fh / FS);
   }
 
   function draw(dt) {
@@ -370,10 +412,11 @@
 
   let statusTimer = 0;
   function updateStatus() {
-    if (++statusTimer % 10) return;
+    if (++statusTimer % 10 && statusTimer > 0) return;
     const m = Math.floor(playSec / 60), sec = Math.floor(playSec % 60);
     const extra = scene.status();
-    $('status').textContent = `${extra ? extra + ' ・ ' : ''}しずく ${dropCount}滴 ・ 経過 ${m}:${String(sec).padStart(2, '0')}`;
+    const base = t('status', { n: dropCount, time: `${m}:${String(sec).padStart(2, '0')}` });
+    $('status').textContent = extra ? `${extra} ・ ${base}` : base;
   }
 
   function setBpm(v) {
@@ -388,9 +431,13 @@
     actx.resume();
     running = !running;
     lastSpawnT = audioNow();
-    $('play').textContent = running ? '■ ストップ' : '▶ スタート';
-    $('play').classList.toggle('on', running);
+    updatePlayLabel();
     rescheduleFrom();
+  }
+
+  function updatePlayLabel() {
+    $('play').textContent = running ? t('stop') : t('start');
+    $('play').classList.toggle('on', running);
   }
 
   let taps = [];
@@ -472,6 +519,7 @@
   panel.addEventListener('pointerup', endSwipe);
   panel.addEventListener('pointercancel', endSwipe);
   $('toggle').onclick = () => $('panel').classList.remove('hidden');
+  $('lang').onclick = () => applyLang(lang === 'ja' ? 'en' : 'ja');
 
   addEventListener('keydown', (e) => {
     if (e.target.tagName === 'SELECT') return;
@@ -506,9 +554,13 @@
   }
 
   const qs = new URLSearchParams(location.search);
-  let saved = null;
-  try { saved = localStorage.getItem('metronome.scene'); } catch (e) { /* 読めなければ既定のシーン */ }
-  setScene(qs.get('scene') || saved || 'frog');
+  let saved = null, savedLang = null;
+  try {
+    saved = localStorage.getItem('metronome.scene');
+    savedLang = localStorage.getItem('metronome.lang');
+  } catch (e) { /* 読めなければ既定値 */ }
+  applyLang(qs.get('lang') || savedLang || ((navigator.language || '').startsWith('ja') ? 'ja' : 'en'));
+  setScene(qs.get('scene') || saved || 'glass');
   buildDots();
   if (qs.has('bpm')) setBpm(+qs.get('bpm'));
   if (qs.has('prog')) forcedProg = +qs.get('prog');

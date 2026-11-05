@@ -10,7 +10,8 @@
     const view = app.view;
     const DESK_Y = 585;        // テーブル天板の高さ
     const TABLE_THICK = 22;    // 天板の厚み
-    const CEIL_Y = 40;         // 天井の面
+    // 天井の面は画面の上端のすぐ下（薄い天井が見えるだけ）。画面の縦横比で高さが変わる
+    const ceilY = () => app.screenTop() + 14;
     const FLOOR_Y = H + 60;    // 床は画面の外。こぼれた水はここに溜まり、やがて画面下からせり上がる
     // 揺れ: 台座を軸にしたばね。約 2.2Hz で、数回揺れて止まる
     const WOBBLE_W = 2 * Math.PI * 2.2, WOBBLE_DAMP = 0.07, WOBBLE_MAX_V = 1.8;
@@ -31,7 +32,8 @@
     }
 
     function drawCeiling() {
-      const top = -view.oy / view.s - 2;
+      const CEIL_Y = ceilY();
+      const top = app.screenTop() - 2;
       const x0 = -view.ox / view.s - 2, x1 = (app.canvas.width - view.ox) / view.s + 2;
       const g = ctx.createLinearGradient(0, top, 0, CEIL_Y);
       g.addColorStop(0, '#2a303a');
@@ -62,7 +64,7 @@
 
     // 天井の平らな面から、薄い水の膜 → ふくらみ → くびれ → 重みで落ちる直前、と育つしずく
     function drawCeilingDrop(prog) {
-      const cx = glass.cx, c0 = CEIL_Y;
+      const cx = glass.cx, c0 = ceilY();
       const rmax = 3 + app.dropSize * 0.55;
       ctx.beginPath();
       if (prog < 0.45) {
@@ -258,7 +260,7 @@
         table = { cx: W / 2, rx, x0: W / 2 - rx, x1: W / 2 + rx, top: DESK_Y, bottom: DESK_Y + TABLE_THICK };
         glass = FluidSim.makeGlass(W / 2, DESK_Y);
         wobble.angle = wobble.vel = 0;
-        return { body: glass, floorY: FLOOR_Y, table, params: { killY: H + 10, topLimit: CEIL_Y + 60 } };
+        return { body: glass, floorY: FLOOR_Y, table, params: { killY: H + 10, topLimit: 100 } };
       },
       attach(s) {
         sim = s;
@@ -268,10 +270,10 @@
       get spawnX() { return glass.cx; },
       // しずくが離れる瞬間の先頭（一番下）の粒子の位置
       spawnY() {
-        const rmax = 3 + app.dropSize * 0.55;
-        return Math.max(CEIL_Y + rmax * 3.3, CEIL_Y + 2 + 4.2 * (app.dropSize - 1));
+        const rmax = 3 + app.dropSize * 0.55, c = ceilY();
+        return Math.max(c + rmax * 3.3, c + 2 + 4.2 * (app.dropSize - 1));
       },
-      surfaceRange() { return [CEIL_Y + 60, H]; },
+      surfaceRange() { return [ceilY() + 60, H]; },
       defaultSurface() { return glass.bottomY - sim.pr - 1.5; },
 
       // テーブルの上の水: 奥行き方向に縦長に伸ばして、楕円の天板に沿った一枚の水たまりに見せる（見た目だけ）
@@ -326,11 +328,11 @@
         return 520 + 650 * Math.min(1, fill);          // 溜まるほど音が高くなる
       },
       status() {
-        if (sim.baseY <= glass.rimY + 6) return 'グラスは水の底に…';
-        if (sim.baseY < sim.floorY - 0.5) return `床の水 ${Math.round(sim.floorY - sim.baseY)}mm`;
+        if (sim.baseY <= glass.rimY + 6) return app.t('glassUnder');
+        if (sim.baseY < sim.floorY - 0.5) return app.t('floorWater', { n: Math.round(sim.floorY - sim.baseY) });
         const inBowl = sim.countInBowl();
         const fill = Math.min(100, Math.round(inBowl / bowlCapacity * 100));
-        return fill >= 90 && sim.n - inBowl > 30 ? 'あふれています' : `グラス ${fill}%`;
+        return fill >= 90 && sim.n - inBowl > 30 ? app.t('overflowing') : app.t('glassFill', { n: fill });
       },
       onReset() { wobble.angle = wobble.vel = 0; glass.setAngle(0); },
       prefillDone() {},

@@ -36,7 +36,15 @@
   #toggle { position: fixed; top: 12px; left: 12px; display: none; }
   #panel.hidden { display: none; }
   #panel.hidden + #toggle { display: block; }
-  @media (max-width: 600px) { #panel { width: calc(100% - 24px); } }
+  #lang { position: fixed; top: 12px; right: 12px; width: 92px; height: 34px; padding: 0; border-radius: 17px;
+    display: flex; align-items: center; background: rgba(18, 26, 38, 0.72); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.14); font-size: 13px; font-weight: 600; }
+  #lang .opt { position: relative; flex: 1; text-align: center; z-index: 1; opacity: 0.55; transition: opacity 0.2s; }
+  #lang .knob { position: absolute; top: 3px; left: 3px; width: 42px; height: 26px; border-radius: 13px;
+    background: #2f7fd8; transition: transform 0.2s ease-out; }
+  #lang[aria-checked="true"] .knob { transform: translateX(44px); }
+  #lang[aria-checked="false"] .opt[data-l="ja"], #lang[aria-checked="true"] .opt[data-l="en"] { opacity: 1; }
+  @media (max-width: 600px) { #panel { top: 56px; width: calc(100% - 24px); max-height: calc(100% - 68px); overflow-y: auto; } }
 </style>
 </head>
 <body>
@@ -44,8 +52,8 @@
 
 <div id="panel">
   <div class="row">
-    <button id="hide" title="メニューを閉じる" aria-label="メニューを閉じる">✕</button>
-    <h1>しずくメトロノーム</h1>
+    <button id="hide" data-i18n-label="close">✕</button>
+    <h1 data-i18n="title">しずくメトロノーム</h1>
   </div>
   <div class="row bpm">
     <button id="minus">−</button>
@@ -55,28 +63,38 @@
   <input type="range" id="bpm" min="30" max="240" value="90">
   <div class="row">
     <button id="play">▶ スタート</button>
-    <button id="tap" title="T キー">タップ</button>
+    <button id="tap" data-i18n="tap">タップ</button>
   </div>
   <div id="dots"></div>
-  <label><span class="lab">シーン
+  <label><span class="lab"><span data-i18n="scene">シーン</span>
     <select id="scene">
-      <option value="frog">カエルと葉っぱ</option>
-      <option value="glass">グラスと天井</option>
+      <option value="glass" data-i18n="sceneGlass">グラスと天井</option>
+      <option value="frog" data-i18n="sceneFrog">カエルと葉っぱ</option>
     </select></span></label>
-  <label><span class="lab">拍子
+  <label><span class="lab"><span data-i18n="beats">拍子</span>
     <select id="beats">
-      <option value="1">なし</option><option value="2">2拍</option><option value="3">3拍</option>
-      <option value="4" selected>4拍</option><option value="5">5拍</option><option value="6">6拍</option><option value="7">7拍</option>
+      <option value="1" data-i18n="beatsNone">なし</option>
+      <option value="2" data-i18n="beatsN" data-n="2">2拍</option>
+      <option value="3" data-i18n="beatsN" data-n="3">3拍</option>
+      <option value="4" data-i18n="beatsN" data-n="4" selected>4拍</option>
+      <option value="5" data-i18n="beatsN" data-n="5">5拍</option>
+      <option value="6" data-i18n="beatsN" data-n="6">6拍</option>
+      <option value="7" data-i18n="beatsN" data-n="7">7拍</option>
     </select></span></label>
-  <label><span class="lab">しずくの大きさ <span id="dropVal">5</span></span>
+  <label><span class="lab"><span data-i18n="dropSize">しずくの大きさ</span> <span id="dropVal">5</span></span>
     <input type="range" id="drop" min="1" max="12" value="5"></label>
-  <label><span class="lab">音量 <span id="volVal">70</span></span>
+  <label><span class="lab"><span data-i18n="volume">音量</span> <span id="volVal">70</span></span>
     <input type="range" id="vol" min="0" max="100" value="70"></label>
-  <div class="row"><button id="reset" style="flex:1">最初からやり直す</button></div>
-  <div id="status">しずく 0滴 ・ 経過 0:00</div>
-  <div class="hint">Space: スタート/ストップ　↑↓: BPM　T: タップ</div>
+  <div class="row"><button id="reset" style="flex:1" data-i18n="reset">最初からやり直す</button></div>
+  <div id="status"></div>
+  <div class="hint" data-i18n="hint">Space: スタート/ストップ　↑↓: BPM　T: タップ</div>
 </div>
-<button id="toggle">☰</button>
+<button id="toggle" data-i18n-label="open">☰</button>
+
+<!-- 言語切り替え（スライドスイッチ） -->
+<button id="lang" role="switch" aria-checked="false" aria-label="Language / 言語">
+  <span class="knob"></span><span class="opt" data-l="ja">JP</span><span class="opt" data-l="en">EN</span>
+</button>
 
 <script src="sim.js"></script>
 <script src="scene-frog.js"></script>
