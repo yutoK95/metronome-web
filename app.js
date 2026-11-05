@@ -64,16 +64,15 @@
     get W() { return W; },
     get dropSize() { return dropSize; },
     get running() { return running; },
-    hasAudio: () => !!actx,
     // 効果音用: 必要ならオーディオを用意して { ac, out, noise } を返す（ユーザー操作の中で呼ぶ）
     audio: () => {
       ensureAudio();
-      if (actx.state !== 'running') actx.resume();
+      unlockAudio();
       return { ac: actx, out: master, noise: noiseBuf };
     },
     t: (key, params) => t(key, params),
     screenTop: () => -view.oy / view.s,   // 画面の上端のワールド y 座標
-    audioNow: () => (actx ? audioNow() : 0),
+    now: () => now(),
   };
 
   // ---------- ワールド ----------
@@ -93,7 +92,7 @@
     initWorld();
     $('scene').value = name;
     try { localStorage.setItem('metronome.scene', name); } catch (e) { /* 保存できなくても動作は続ける */ }
-    if (actx) rescheduleFrom();
+    rescheduleFrom();
   }
 
   function resize() {
@@ -149,6 +148,22 @@
     for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
   }
 
+  // ブラウザは操作があるまで音を出させないので、最初のクリック・タップ・キー操作で音を有効にする
+  function unlockAudio() {
+    ensureAudio();
+    if (actx.state !== 'running') actx.resume().catch(() => { /* 次の操作で再試行 */ });
+  }
+  for (const ev of ['pointerdown', 'keydown', 'touchend']) addEventListener(ev, unlockAudio, { capture: true });
+
+  // 画面の時計（秒）→ 音の時計への変換。出力の遅れも含めて、その時刻に「聞こえる」ように合わせる
+  function toAudioTime(t) {
+    if (actx.getOutputTimestamp) {
+      const ts = actx.getOutputTimestamp();
+      if (ts.contextTime > 0 && ts.performanceTime > 0) return t - ts.performanceTime / 1000 + ts.contextTime;
+    }
+    return t - now() + actx.currentTime - (actx.outputLatency || actx.baseLatency || 0);
+  }
+
   // 水滴の「ポチャン」: 周波数が急上昇するサイン波（気泡の共鳴）+ 着水ノイズ
   function playDrop(t, accent, pitch) {
     const out = actx.createGain();
@@ -184,16 +199,17 @@
   }
 
   // ---------- 拍のスケジューリング ----------
-  // beats: 音を鳴らす時刻（=着水時刻）。しずくは落下時間を逆算して早めに離す。
+  // beats: 着水する（音が聞こえる）時刻。しずくは落下時間を逆算して早めに離す。
+  // 時刻は画面の時計で持つので、音がまだ有効になっていなくても、しずくは拍どおりに落ちる。
   let beats = [], nextBeatTime = 0, beatCounter = 0;
-  const audioNow = () => actx.currentTime - (actx.outputLatency || actx.baseLatency || 0);
+  const now = () => performance.now() / 1000;
 
   function fallSeconds() {
     return sim.predictFall(scene.spawnY(), SPAWN_VY, surfaceY() - 2) / STEP_HZ;
   }
 
   function fillQueue() {
-    const ahead = audioNow() + 2.5;
+    const ahead = now() + 2.5;
     while (nextBeatTime < ahead) {
       beats.push({
         time: nextBeatTime,
@@ -209,7 +225,7 @@
   // BPM・シーン変更や開始時に、まだしずくを離していない拍を組み直す
   function rescheduleFrom() {
     beats = beats.filter((b) => b.spawned);
-    const minStart = audioNow() + fallSeconds() + 0.05;
+    const minStart = now() + fallSeconds() + 0.05;
     const last = beats[beats.length - 1];
     if (last) {
       nextBeatTime = Math.max(last.time + 60 / bpm, minStart);
@@ -222,38 +238,37 @@
   }
 
   setInterval(() => {
-    if (!actx) return;
     if (running) fillQueue();
-    const now = audioNow();
+    const t = now();
+    const audible = actx && actx.state === 'running';
     for (const b of beats) {
-      if (b.spawned && !b.sounded && !b.skip && b.time < now + 0.15) {
-        playDrop(Math.max(b.time + (actx.currentTime - now), actx.currentTime), b.accent, scene.pitch());
+      if (b.spawned && !b.sounded && !b.skip && b.time < t + 0.15) {
+        if (audible) playDrop(Math.max(toAudioTime(b.time), actx.currentTime), b.accent, scene.pitch());
         b.sounded = true;
       }
     }
-    beats = beats.filter((b) => !(b.time < now - 1 && (b.sounded || b.skip)));
+    beats = beats.filter((b) => !(b.time < t - 1 && (b.sounded || b.skip)));
   }, 25);
 
   function processSpawns() {
-    if (!actx) return;
-    const now = audioNow();
+    const t = now();
     const y0 = scene.spawnY();
     const steps = sim.predictFall(y0, SPAWN_VY, surfaceY() - 2);
     nextSpawnT = 0;
     for (const b of beats) {
       if (b.spawned) continue;
       const spawnT = b.time - steps / STEP_HZ;
-      if (now < spawnT) { nextSpawnT = spawnT; break; }
+      if (t < spawnT) { nextSpawnT = spawnT; break; }
       b.spawned = true;
-      if (now > b.time - 0.03) { b.skip = true; continue; }  // タブ非表示などで間に合わなかった拍
-      const late = Math.round((now - spawnT) * STEP_HZ);
+      if (t > b.time - 0.03) { b.skip = true; continue; }  // タブ非表示などで間に合わなかった拍
+      const late = Math.round((t - spawnT) * STEP_HZ);
       const st = sim.kinematic(y0, SPAWN_VY, late);
       sim.spawnDrop(scene.spawnX, st.y, dropSize, st.v);
-      lastSpawnT = now;
+      lastSpawnT = t;
     }
     // 着水の瞬間をシーンに知らせる（カエルが目を細める など）
     for (const b of beats) {
-      if (b.sounded && !b.hit && b.time <= now) {
+      if (b.sounded && !b.hit && b.time <= t) {
         b.hit = true;
         dropCount++;
         scene.onHit(b);
@@ -281,8 +296,8 @@
   let forcedProg = -1;   // 確認用（?prog=0.8）
   function dropProgress() {
     if (forcedProg >= 0) return forcedProg;
-    if (running && actx && nextSpawnT > lastSpawnT) {
-      return Math.min(1, Math.max(0, (audioNow() - lastSpawnT) / (nextSpawnT - lastSpawnT)));
+    if (running && nextSpawnT > lastSpawnT) {
+      return Math.min(1, Math.max(0, (now() - lastSpawnT) / (nextSpawnT - lastSpawnT)));
     }
     return 0.3;
   }
@@ -405,11 +420,9 @@
 
   function updateDots() {
     let cur = -1;
-    if (actx) {
-      const now = audioNow();
-      for (const b of beats) {
-        if (b.sounded && b.time <= now && now - b.time < Math.min(0.15, 30 / bpm)) cur = b.idx;
-      }
+    const t = now();
+    for (const b of beats) {
+      if (b.sounded && b.time <= t && t - b.time < Math.min(0.15, 30 / bpm)) cur = b.idx;
     }
     const spans = dotsEl.children;
     for (let i = 0; i < spans.length; i++) {
@@ -434,10 +447,9 @@
   }
 
   function toggle() {
-    ensureAudio();
-    actx.resume();
+    unlockAudio();
     running = !running;
-    lastSpawnT = audioNow();
+    lastSpawnT = now();
     updatePlayLabel();
     rescheduleFrom();
   }
@@ -571,7 +583,7 @@
   buildDots();
   if (qs.has('bpm')) setBpm(+qs.get('bpm'));
   if (qs.has('prog')) forcedProg = +qs.get('prog');
-  if (qs.has('autostart')) toggle();
+  if (!qs.has('paused')) toggle();
   if (qs.has('prefill')) {   // 確認用: 指定秒数ぶんしずくを落とした状態から始める
     const per = Math.round(STEP_HZ * 60 / bpm);
     for (let s = 0; s < STEP_HZ * +qs.get('prefill'); s++) {

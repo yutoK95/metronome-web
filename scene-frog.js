@@ -457,10 +457,8 @@
 
     function eyeSquint() {
       let s = 0;
-      if (app.hasAudio()) {
-        const age = app.audioNow() - hitAt;
-        if (age >= 0 && age < 1.5) s = hitPeak * (age < 0.05 ? age / 0.05 : Math.exp(-(age - 0.05) / 0.18));
-      }
+      const age = app.now() - hitAt;
+      if (age >= 0 && age < 1.5) s = hitPeak * (age < 0.05 ? age / 0.05 : Math.exp(-(age - 0.05) / 0.18));
       // ときどきまばたき
       const t = performance.now() / 1000;
       if (t > blinkAt) {
