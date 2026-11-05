@@ -17,6 +17,79 @@
     killY: Infinity, // これより下（画面外）に落ちた粒子はすぐプールに変換する
   };
 
+  // ワイングラス。台座の中心 (cx, deskY) を軸に傾けられる（setAngle）。y は下向き。
+  // 当たり判定はボウル部分だけ（ステムと台座は立体的に水が回り込めるので付けない）
+  function makeGlass(cx, deskY) {
+    const stemH = 150, bowlH = 150, R = 72;
+    const bottomY = deskY - stemH;
+    const rimY = bottomY - bowlH;
+    const hwAt = (t) => {
+      if (t <= 0) return 0;
+      if (t >= 1) t = 1;
+      if (t < 0.6) { const u = 1 - t / 0.6; return R * Math.sqrt(1 - u * u); }
+      const u = (t - 0.6) / 0.4;
+      return R * (1 - 0.1 * u * u);
+    };
+    const hwAtY = (y) => hwAt((bottomY - y) / bowlH);
+
+    const N = 22;
+    const left = [], right = [];
+    for (let i = 0; i <= N; i++) {
+      const t = 1 - Math.cos((i / N) * Math.PI / 2);
+      const y = bottomY - t * bowlH, hw = hwAt(t);
+      left.push([cx - hw, y]);
+      right.push([cx + hw, y]);
+    }
+    // 傾けていないときの線分（ローカル座標）
+    const local = [];
+    for (let i = 0; i < N; i++) {
+      local.push([left[i], left[i + 1]]);
+      local.push([right[i], right[i + 1]]);
+    }
+
+    let area = 0;
+    for (let i = 0; i < 200; i++) area += 2 * Math.max(0, hwAt((i + 0.5) / 200) - 4) * bowlH / 200;
+
+    const g = {
+      cx, deskY, bottomY, rimY, bowlH, R, stemH, hwAt, hwAtY, left, right,
+      rimHW: hwAt(1), area,
+      pivotX: cx, pivotY: deskY,
+      angle: 0,          // 傾き（rad、正で時計回り）
+      omega: 0,          // 角速度（rad / substep）。壁が水を押す速さの計算に使う
+      segs: local.map(() => ({ ax: 0, ay: 0, tx: 0, ty: 0, nx: 0, ny: 0, len: 0, half: 1.5 })),
+      bbox: { x0: 0, x1: 0, y0: 0, y1: 0 },
+      // ワールド座標 → 傾けていないグラスの座標
+      toLocal(x, y) {
+        const c = Math.cos(-g.angle), s = Math.sin(-g.angle), dx = x - cx, dy = y - deskY;
+        return [cx + dx * c - dy * s, deskY + dx * s + dy * c];
+      },
+      inBowl(x, y) {
+        const [lx, ly] = g.angle ? g.toLocal(x, y) : [x, y];
+        return ly > rimY && ly < bottomY && Math.abs(lx - cx) < hwAtY(ly);
+      },
+      // 点 (x, y) にある壁の速度（px / substep）
+      velAt(x, y) { return [-g.omega * (y - deskY), g.omega * (x - cx)]; },
+      setAngle(angle, omega = 0) {
+        g.angle = angle; g.omega = omega;
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const rot = (p) => [cx + (p[0] - cx) * c - (p[1] - deskY) * s, deskY + (p[0] - cx) * s + (p[1] - deskY) * c];
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (let k = 0; k < local.length; k++) {
+          const a = rot(local[k][0]), b = rot(local[k][1]);
+          const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1e-6;
+          const sg = g.segs[k];
+          sg.ax = a[0]; sg.ay = a[1]; sg.len = len;
+          sg.tx = dx / len; sg.ty = dy / len; sg.nx = -sg.ty; sg.ny = sg.tx;
+          x0 = Math.min(x0, a[0], b[0]); x1 = Math.max(x1, a[0], b[0]);
+          y0 = Math.min(y0, a[1], b[1]); y1 = Math.max(y1, a[1], b[1]);
+        }
+        g.bbox.x0 = x0 - 12; g.bbox.x1 = x1 + 12; g.bbox.y0 = y0 - 12; g.bbox.y1 = y1 + 12;
+      },
+    };
+    g.setAngle(0);
+    return g;
+  }
+
   // カエルの体の輪郭（正面から見た姿）。y は下向き。
   // 水が当たる・流れ落ちる面だけを当たり判定にする（目の出っぱりは見た目だけ）
   function makeFrog(cx, groundY) {
@@ -70,6 +143,7 @@
       this.wd = new Float32Array(cap); this.wnx = new Float32Array(cap); this.wny = new Float32Array(cap);
       this.buildWallTable();
       this.cnx = new Float32Array(cap); this.cny = new Float32Array(cap);  // 衝突面の法線
+      this.cwv = new Float32Array(cap);   // 衝突した壁が粒子を押し出す向きの速さ（動く壁用）
       this.rho = new Float32Array(cap);      // 描画用: 周りの混み具合
       this.onFloor = new Uint8Array(cap);    // 描画用: 床に接しているか
       this.seed = new Float32Array(cap);     // 描画用: 粒子ごとの固定乱数
@@ -228,11 +302,12 @@
         let ux = x[i] - px[i], uy = y[i] - py[i];
         const s2 = ux * ux + uy * uy;
         if (s2 > vmax2) { const f = this.vmax / Math.sqrt(s2); ux *= f; uy *= f; }
-        // 押し戻しで生じた「壁から離れる速度」は捨てる（壁を這い上がる現象の防止）
+        // 押し戻しで生じた「壁から離れる速度」は捨てる（壁を這い上がる現象の防止）。
+        // ただし壁自体が動いて押している分（グラスを揺らしたとき）は残す
         const nx = this.cnx[i], ny = this.cny[i];
         if (nx !== 0 || ny !== 0) {
-          const nl = Math.hypot(nx, ny), vn = (ux * nx + uy * ny) / nl;
-          if (vn > 0) { ux -= vn * nx / nl; uy -= vn * ny / nl; }
+          const nl = Math.hypot(nx, ny), vn = (ux * nx + uy * ny) / nl, wv = this.cwv[i];
+          if (vn > wv) { const d = vn - wv; ux -= d * nx / nl; uy -= d * ny / nl; }
         }
         vx[i] = ux; vy[i] = uy;
       }
@@ -277,7 +352,7 @@
       const tb = this.table, tableDry = !!tb && this.baseY > tb.top;
 
       for (let i = 0; i < n; i++) {
-        let xi = x[i], yi = y[i], cnx = 0, cny = 0;
+        let xi = x[i], yi = y[i], cnx = 0, cny = 0, cwv = 0, hit = false;
 
         // 床（床 or 溜まった水のプール）。水没前の器の中はプールの影響を受けない
         const floor = !submerged && body.inBowl(xi, yi) ? this.floorY : this.baseY;
@@ -322,6 +397,7 @@
                 const side = s0 > 0 ? 1 : -1;
                 xi = ix + sg.nx * side * R; yi = iy + sg.ny * side * R;
                 cnx += sg.nx * side; cny += sg.ny * side;
+                hit = true;
               }
             }
             // カプセルとの距離
@@ -334,16 +410,22 @@
                 const d = Math.sqrt(d2);
                 xi = cxp + dx / d * R; yi = cyp + dy / d * R;
                 cnx += dx / d; cny += dy / d;
+                hit = true;
               } else {
                 const side = s0 > 0 ? 1 : -1;
                 xi = cxp + sg.nx * side * R; yi = cyp + sg.ny * side * R;
                 cnx += sg.nx * side; cny += sg.ny * side;
+                hit = true;
               }
             }
           }
         }
+        if (hit && body.omega && (cnx || cny)) {
+          const v = body.velAt(xi, yi), nl = Math.hypot(cnx, cny);
+          cwv = Math.max(0, (v[0] * cnx + v[1] * cny) / nl);
+        }
         x[i] = xi; y[i] = yi;
-        this.cnx[i] = cnx; this.cny[i] = cny;
+        this.cnx[i] = cnx; this.cny[i] = cny; this.cwv[i] = cwv;
       }
     }
 
@@ -390,6 +472,12 @@
       this.baseY = Math.max(this.topLimit, this.baseY - removed * this.areaPer / this.W);
     }
 
+    countInBowl() {
+      let c = 0;
+      for (let i = 0; i < this.n; i++) if (this.body.inBowl(this.x[i], this.y[i])) c++;
+      return c;
+    }
+
     // 地面に落ちた水を少しずつ土に染み込ませる（水たまりが一定の大きさで落ち着く）
     // cx, rx: 水たまりの中心と半径。そこから外れた水は早く染み込む
     soak(prob, cx = 0, rx = Infinity) {
@@ -416,7 +504,7 @@
     }
   }
 
-  const api = { Sim, makeFrog, DEFAULTS };
+  const api = { Sim, makeGlass, makeFrog, DEFAULTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FluidSim = api;
 })(typeof window !== 'undefined' ? window : globalThis);
