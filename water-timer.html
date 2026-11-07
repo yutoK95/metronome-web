@@ -27,7 +27,7 @@
   #setup button.sel { background: #2f7fd8; border-color: #4a98f0; color: #fff; }
   #setup .custom { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
   #setup input { width: 80px; height: 40px; box-sizing: border-box; font: inherit; color: #dbe6f3; background: #1a2638; border: 1px solid #3a4b63; border-radius: 8px; padding: 0 10px; }
-  #start { margin-top: 18px; height: 48px !important; font-size: 17px !important; font-weight: 700; background: #2f9f6a !important; border-color: #4cc38a !important; color: #fff !important; }
+  #start { position: sticky; bottom: 0; margin-top: 18px; box-shadow: 0 -10px 12px rgba(15, 22, 32, 0.9); height: 48px !important; font-size: 17px !important; font-weight: 700; background: #2f9f6a !important; border-color: #4cc38a !important; color: #fff !important; }
   #menuBtn { position: fixed; left: 14px; top: 14px; width: 44px; height: 44px; padding: 0; font-size: 20px; display: none; background: rgba(15, 22, 32, 0.8); }
   body.run #menuBtn { display: inline-flex; }
   #menu { position: fixed; left: 14px; top: 66px; width: 270px; padding: 16px; border-radius: 14px; display: none; box-sizing: border-box;
@@ -83,17 +83,19 @@
   // 形の定義: hw(t) = 高さ t (0=底, 1=上端) での半分の幅 / from: 水がたまり始める高さ  
   // handle: 取っ手 / cork: 栓 / foot: 脚つき・台つき（物理では広い底になる） / tint: 液体の色  
   const SHAPES = {  
-    tumbler:  { name: 'Tumbler / タンブラー', hw: (t) => 0.24 + 0.05 * t, tint: [74, 168, 255], objs: [['ice', 3]], pitch: 1.0 },  
-    wine:     { name: 'Wine glass / ワイングラス', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.3 * Math.sqrt(Math.max(0, 1 - Math.pow(1 - (t - 0.42) / 0.34, 2))) * (t > 0.76 ? 1 - 0.1 * Math.pow((t - 0.76) / 0.24, 2) : 1) + 0.012, foot: true, tint: [150, 30, 60], pitch: 0.82 },  
-    martini:  { name: 'Martini / カクテル', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.012 + 0.34 * (t - 0.42) / 0.58, foot: true, tint: [190, 230, 120], objs: [['olive', 1]], pitch: 1.12 },  
-    beaker:   { name: 'Beaker / ビーカー', hw: () => 0.2, ticks: true, tint: [90, 220, 190], pitch: 1.05 },  
-    flask:    { name: 'Flask / フラスコ', hw: (t) => t < 0.55 ? 0.3 - (0.3 - 0.075) * Math.pow(t / 0.55, 1.6) : 0.075, tint: [255, 150, 60], ticks: true, pitch: 1.2 },  
-    potion:   { name: 'Potion / ポーション', hw: (t) => t < 0.46 ? circ(0.28, 0.28)(t) : 0.085 + (circ(0.28, 0.28)(0.46) - 0.085) * Math.exp(-(t - 0.46) / 0.05), cork: true, tint: [170, 80, 240], pitch: 1.3 },  
-    teacup:   { name: 'Teacup / ティーカップ', hw: (t) => 0.36 * Math.pow(Math.sin(Math.min(1, (t + 0.06) / 1.06) * Math.PI / 2), 0.55), handle: true, tint: [200, 120, 50], pitch: 0.92 },  
-    mug:      { name: 'Mug / マグカップ', hw: () => 0.26, handle: true, tint: [90, 55, 30], pitch: 0.78 },  
-    fishbowl: { name: 'Fishbowl / 金魚鉢', hw: (t) => t > 0.86 ? 0.2 : (circ(0.45, 0.45)(t) > 0.2 || t < 0.5 ? circ(0.45, 0.45)(t) : Math.max(0.2, circ(0.45, 0.45)(t))), tint: [90, 190, 255], objs: [['pebble', 5]], pitch: 0.95 },  
-    tube:     { name: 'Test tube / 試験管', hw: (t) => t < 0.1 ? circ(0.1, 0.1)(t) * 0.8 : 0.08, tint: [120, 255, 140], ticks: true, foot: true, pitch: 1.45 },  
-    vase:     { name: 'Vase / 花瓶', hw: (t) => t < 0.75 ? 0.08 + 0.2 * Math.sin(Math.PI * t / 0.75) : 0.08 + 0.02 * (t - 0.75) / 0.25, tint: [110, 200, 230], flower: true, pitch: 1.0 },  
+    tumbler:  { name: 'Tumbler / タンブラー', hw: (t) => 0.24 + 0.05 * t, tint: [74, 168, 255], objs: [['ice', 3]], pitch: 1.0, kick: 2.72 },  
+    wine:     { name: 'Wine glass / ワイングラス', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.3 * Math.sqrt(Math.max(0, 1 - Math.pow(1 - (t - 0.42) / 0.34, 2))) * (t > 0.76 ? 1 - 0.1 * Math.pow((t - 0.76) / 0.24, 2) : 1) + 0.012, foot: true, tint: [150, 30, 60], pitch: 0.82, kick: 2.56 },  
+    martini:  { name: 'Martini / カクテル', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.012 + 0.34 * (t - 0.42) / 0.58, foot: true, tint: [190, 230, 120], objs: [['olive', 1]], pitch: 1.12, kick: 2.56 },  
+    beaker:   { name: 'Beaker / ビーカー', hw: () => 0.2, ticks: true, tint: [90, 220, 190], pitch: 1.05, kick: 2.24 },  
+    flask:    { name: 'Flask / フラスコ', hw: (t) => t < 0.55 ? 0.3 - (0.3 - 0.075) * Math.pow(t / 0.55, 1.6) : 0.075, tint: [255, 150, 60], ticks: true, pitch: 1.2, kick: 3.20 },  
+    potion:   { name: 'Potion / ポーション', hw: (t) => t < 0.46 ? circ(0.28, 0.28)(t) : 0.085 + (circ(0.28, 0.28)(0.46) - 0.085) * Math.exp(-(t - 0.46) / 0.05), cork: true, tint: [170, 80, 240], pitch: 1.3, kick: 1.44 },  
+    teacup:   { name: 'Teacup / ティーカップ', hw: (t) => 0.36 * Math.pow(Math.sin(Math.min(1, (t + 0.06) / 1.06) * Math.PI / 2), 0.55), handle: true, tint: [200, 120, 50], pitch: 0.92, kick: 1.28 },  
+    mug:      { name: 'Mug / マグカップ', hw: () => 0.26, handle: true, tint: [90, 55, 30], pitch: 0.78, kick: 2.88 },  
+    fishbowl: { name: 'Fishbowl / 金魚鉢', hw: (t) => t > 0.86 ? 0.2 : (circ(0.45, 0.45)(t) > 0.2 || t < 0.5 ? circ(0.45, 0.45)(t) : Math.max(0.2, circ(0.45, 0.45)(t))), tint: [90, 190, 255], objs: [['egg', 5]], pitch: 0.95, kick: 1.92 },  
+    tube:     { name: 'Test tube / 試験管', hw: (t) => t < 0.1 ? circ(0.1, 0.1)(t) * 0.8 : 0.08, tint: [120, 255, 140], ticks: true, foot: true, pitch: 1.45, kick: 2.40 },  
+    vase:     { name: 'Vase / 花瓶', hw: (t) => t < 0.75 ? 0.08 + 0.2 * Math.sin(Math.PI * t / 0.75) : 0.08 + 0.02 * (t - 0.75) / 0.25, tint: [110, 200, 230], flower: true, pitch: 1.0, kick: 1.28 },  
+    shishi:   { name: 'Shishi-odoshi / 鹿威し', mode: 'shishi', tint: [90, 185, 255], pitch: 1.0 },  
+    beko:     { name: 'Akabeko / 赤べこ', mode: 'beko', tint: [90, 185, 255], pitch: 1.0 },  
   };  
     
   // ---- 多角形の計算 ----  
@@ -126,7 +128,8 @@
   const areaBelow = (p, h) => { const c = clipBelow(p, h); return c.length < 3 ? { area: 0, cx: 0, cy: 0 } : polyArea(c); };  
     
   // 水以外のオブジェクト: r 半径 / rho 水に対する重さ（1 より小さいと浮く）/ e 反発  
-  const OBJ = { ice: { r: 0.05, rho: 0.88, e: 0.3 }, olive: { r: 0.04, rho: 1.1, e: 0.15 }, pebble: { r: 0.03, rho: 2.4, e: 0.25 } };  
+  const OBJ = { ice: { r: 0.05, rho: 0.88, e: 0.3 }, olive: { r: 0.04, rho: 1.1, e: 0.15 }, pebble: { r: 0.03, rho: 2.4, e: 0.25 }, egg: { r: 0.032, rho: 1.04, e: 0.1 }, fish: { r: 0.045, rho: 1.0, e: 0.2 } };  
+  const HATCH_FRAC = 0.4;   // 金魚鉢の水がこの割合までたまったら、卵が孵化する  
   function pointInPoly(p, x, y) {  
     let c = false;  
     for (let i = 0, j = p.length - 1; i < p.length; j = i++) {  
@@ -160,8 +163,19 @@
       shape, sil, inner, capacity, areaAt, baseHalf, silArea: silInfo.area, mShell,  
       tankW, tankH,  
       X: 0, Y: 0, th: 0, vx: 0, vy: 0, w: 0, clock: 0,  
-      V: 0, Vp: 0, level: 0, spill: 0, poolD: 0, sub: 0, chord: null, Cx: 0, Cy: 0, objects: [], events: [], wallW: 0,  
+      V: 0, Vp: 0, level: 0, spill: 0, spillTotal: 0, poolD: 0, sub: 0, chord: null, Cx: 0, Cy: 0, objects: [], events: [], wallW: 0,  
       T(u, w) { const c = Math.cos(b.th), s = Math.sin(b.th); return [b.X + u * c - w * s, b.Y + u * s + w * c]; },  
+      // クリックの衝撃: dir = +1 で反時計回り。水面がふちに近いほど、水がはねてこぼれる。こぼれた量を返す  
+      kick(dir, scale = 1) {  
+        b.w += dir * (shape.kick || 2) * scale;  
+        let vol = 0;  
+        if (b.V > 1e-4 && b.chord) {  
+          const free = Math.max(0, 1 - b.level + b.Y), hs = 0.07 * scale * (shape.kick || 2) / 2.5, width = b.chord[1] - b.chord[0];  
+          if (hs > free) vol = Math.min(b.V * 0.4, (hs - free) * width * 0.6);  
+          b.V -= vol; b.Vp += vol; b.spillTotal += vol;  
+        }  
+        return vol;  
+      },  
       // 落ちてきた水を加える: グラスの中へ（あふれた分は床へ）、または直接床へ  
       addWater(v, toGlass) { if (toGlass) b.V += v; else b.Vp += v; },  
       // 水以外のオブジェクトを、空のグラスの底に置く  
@@ -170,7 +184,7 @@
         for (const [kind, n] of (shape.objs || [])) {  
           for (let i = 0; i < n; i++, k++) {  
             const d = OBJ[kind];  
-            b.objects.push({ kind, r: d.r, rho: d.rho, e: d.e, x: (i - (n - 1) / 2) * d.r * 2.2, y: from + d.r * 1.2 + k * d.r * 2.4, vx: 0, vy: 0, th: i * 0.7, w: 0, last: 0 });  
+            b.objects.push({ kind, r: d.r, rho: d.rho, e: d.e, x: (i - (n - 1) / 2) * d.r * 2.2, y: from + d.r * 1.2 + k * d.r * 2.4, vx: 0, vy: 0, th: i * 0.7, w: 0, last: 0, wet: 0, delay: 0.5 + i * 0.7, hd: 0, tt: 0, dir: 1, id: k });  
           }  
         }  
       },  
@@ -182,6 +196,7 @@
         const n = Math.max(1, Math.ceil(dt / (1 / 150))), h = dt / n;  
         let spilled = 0;  
         for (let i = 0; i < n; i++) spilled += b.sub1(h, inflow);  
+        b.spillTotal += spilled;  
         b.spill += (spilled / dt - b.spill) * Math.min(1, dt * 8);  
       },  
       // --- 水以外のオブジェクト（氷・オリーブ・小石）: 水の浮力、グラスの壁、床、ほかのオブジェクトとの当たり判定 ---  
@@ -197,11 +212,25 @@
           if (b.V > 1e-6 && pointInPoly(Iw, o.x, o.y)) level = b.level;  
           if (b.poolD > 0) level = Math.max(level, b.poolD);  
           const f = Math.max(0, Math.min(1, (level - (o.y - o.r)) / (2 * o.r)));  
+          // 卵: 水に浸かって、グラスの水が一定量たまる（または床の水に浸かる）と、少しずつ時間をずらして孵化する  
+          if (o.kind === 'egg') {  
+            if (f > 0.99 && (b.poolD > 0.05 || b.V >= HATCH_FRAC * b.capacity)) o.wet += dt; else o.wet = Math.max(0, o.wet - dt);  
+            if (o.wet > o.delay) { const d = OBJ.fish; o.kind = 'fish'; o.r = d.r; o.rho = d.rho; o.e = d.e; o.vy += 0.3; b.events.push({ kind: 'hatch', x: o.x, y: o.y, speed: 0, other: '' }); }  
+          }  
+          // 魚: 水の中をゆっくり泳ぐ（ときどき向きを変える）。水面には出ない  
+          if (o.kind === 'fish' && f > 0.8) {  
+            o.tt -= dt;  
+            if (o.tt <= 0) { o.hd = (Math.random() - 0.5) * 1.6 + (Math.random() < 0.5 ? 0 : Math.PI); o.tt = 0.8 + Math.random() * 1.6; }  
+            const th = 0.9; o.vx += Math.cos(o.hd) * th * dt; o.vy += Math.sin(o.hd) * th * 0.45 * dt;  
+            if (o.y + o.r > level - 0.05) o.vy -= 1.2 * dt;  
+            if (Math.abs(o.vx) > 0.03) o.dir += ((o.vx > 0 ? 1 : -1) - o.dir) * Math.min(1, dt * 6);  
+          }  
           const ay = -G + G * f / o.rho, drag = 0.02 + 3.2 * f;  
           o.vx += (-drag * o.vx) * dt; o.vy += (ay - drag * o.vy) * dt; o.w += -(0.1 + 2 * f) * o.w * dt;  
           o.x += o.vx * dt; o.y += o.vy * dt; o.th += o.w * dt;  
           // 床と部屋の壁  
           if (o.y < o.r) { o.y = o.r; if (o.vy < 0) { hit(o, -o.vy, 'floor'); o.vy = -o.vy * o.e; o.vx *= 0.92; } }  
+          if (o.kind === 'fish') o.th += (0 - o.th) * Math.min(1, dt * 5), o.w = 0;   // 魚は体を水平に保つ  
           const lim = (b.wallW || 3) / 2 - o.r;  
           if (o.x < -lim) { o.x = -lim; o.vx = Math.abs(o.vx) * o.e; } else if (o.x > lim) { o.x = lim; o.vx = -Math.abs(o.vx) * o.e; }  
           // グラスの壁（動いている壁の速さも考える）  
@@ -288,6 +317,48 @@
     b.initObjects();  
     return b;  
   }  
+  // ---- 鹿威し: 竹筒が支点のまわりで回る。水がたまると口が下がって水を出し、戻って石を打つ ----  
+  // a: 口を上げた向きを正とする、水平からの角度。a0 が石に当たって止まっている角度  
+  const SHISHI = { a0: 0.2, aMin: -0.85, arm: 0.34, mt: 0.05, dc: 0.28, rw: 0.28, vcrit: 0.05, vmax: 0.085, aSpill: -0.1 };  
+  function makeShishi() {  
+    const P = SHISHI, c = {  
+      a: P.a0, w: 0, V: 0, events: [], pouring: 0, clock: 0,  
+      reset() { c.a = P.a0; c.w = 0; c.V = 0; c.events = []; c.pouring = 0; },  
+      addWater(v) { c.V = Math.min(P.vmax, c.V + v); },  
+      step(dt) {  
+        const n = Math.max(1, Math.ceil(dt / (1 / 240))), h = dt / n; c.clock += dt;  
+        for (let i = 0; i < n; i++) {  
+          const cos = Math.cos(c.a), I = P.mt * 0.09 + c.V * P.rw * P.rw + 0.004;  
+          // 傾くと水が口のほうへ寄るので、いったん傾き始めると一気に傾く  
+          const rw = P.rw + 0.6 * Math.max(0, P.a0 - c.a);  
+          const tq = G * cos * (P.mt * P.dc - c.V * rw) - 0.03 * c.w;     // 重さのモーメントと、軸の摩擦  
+          c.w += tq / I * h; c.a += c.w * h;  
+          // 口が下がりきったところ（受け止める竹の台）で止まる  
+          if (c.a < P.aMin) { c.a = P.aMin; if (c.w < 0) c.w = -c.w * 0.15; }  
+          // 水を出す: 口が水平より下がると、勢いよく出る  
+          c.pouring = 0;  
+          if (c.a < P.aSpill && c.V > 1e-5) { const out = Math.min(c.V, (0.5 + 5 * (P.aSpill - c.a)) * 0.12 * h * 4); c.V -= out; c.pouring = out / h; c.events.push({ kind: 'pour', vol: out }); }  
+          // 石に当たる: 筒の閉じた側が落ちて、石を打つ  
+          if (c.a > P.a0) { const sp = c.w; c.a = P.a0; if (sp > 0.25) { c.w = -sp * 0.2; c.events.push({ kind: 'strike', speed: sp }); } else c.w = 0; }  
+        }  
+      },  
+    };  
+    return c;  
+  }  
+  // ---- 赤べこ: 頭が首の付け根でばねのように揺れる（正の向きがうなずき）----  
+  function makeBeko() {  
+    const w0 = 2 * Math.PI * 2.0, zeta = 0.09, c = {  
+      phi: 0, w: 0,  
+      reset() { c.phi = 0; c.w = 0; },  
+      hit(strength = 1) { c.w = Math.min(9, c.w + 5.2 * strength); },   // 当たるたびに、うなずく向きへ勢いがつく  
+      step(dt) {  
+        const n = Math.max(1, Math.ceil(dt / (1 / 240))), h = dt / n;  
+        for (let i = 0; i < n; i++) { c.w += (-w0 * w0 * c.phi - 2 * zeta * w0 * c.w) * h; c.phi += c.w * h; }  
+        c.phi = Math.max(-0.6, Math.min(0.75, c.phi));  
+      },  
+    };  
+    return c;  
+  }  
   
 
   const Q = new URLSearchParams(location.search);
@@ -316,7 +387,8 @@
   let elapsed = 0, running = false, chimed = false, lastT = performance.now();
   let drop = null, parts = [], nextLand = 0, spinT = 0;
   let ripples = [];   // 着水でできる波紋（水面の楕円の上に広がる）
-  let body = makeBody(shape, 1.5, 1.08);
+  const newBody = () => (shape.mode ? null : makeBody(shape, 1.5, 1.08));   // グラス以外のモードでは、グラスの本体は使わない
+  let body = newBody();
 
   // ---- 画面 ----
   let W = 0, H = 0, dpr = 1;
@@ -356,7 +428,8 @@
     else if (kind === 'pool') { const f = (250 + 90 * r) * lp; tone(f, f * 1.9, 0.34, 0.6); tone(f * 1.6, f * 3, 0.16, 0.25, 0.07); }   // 深い水: 低い「ボチャッ」＋泡
     else if (kind === 'glass') { const f = 2100 + 500 * r; tone(f, f, 0.45, 0.35); tone(f * 2.76, f * 2.76, 0.22, 0.14); tone(f * 4.1, f * 4.1, 0.1, 0.06); }   // ガラス: 高い「チン」
     else if (kind === 'ice') { const f = 3000 + 800 * r; tone(f, f * 0.9, 0.09, 0.3); tone(620 * lp, 900 * lp, 0.1, 0.18); }     // 氷に当たる: 「カチッ」＋小さな水音
-    else if (kind === 'olive' || kind === 'pebble') { tone(900 + 200 * r, 600, 0.06, 0.3, 0, 'triangle'); tone(520 * lp, 780 * lp, 0.12, 0.2); }
+    else if (kind === 'fish') { const f = (700 + 200 * r) * lp; tone(f, f * 1.8, 0.1, 0.3); }
+    else if (kind === 'olive' || kind === 'pebble' || kind === 'egg') { tone(900 + 200 * r, 600, 0.06, 0.3, 0, 'triangle'); tone(520 * lp, 780 * lp, 0.12, 0.2); }
     else { tone(210, 95, 0.09, 0.55, 0, 'triangle'); tone(900, 700, 0.04, 0.12); }                             // 床: 「コッ」
   }
   // オブジェクト（氷・オリーブ・小石）が、グラスの壁・床・ほかのオブジェクトにぶつかった音
@@ -371,11 +444,42 @@
       else { const f = 1500 + 400 * r; tone(f, f * 0.8, 0.1, 0.3 * a + 0.04); }                                                           // 氷どうし: 「コツッ」
     } else if (e.kind === 'olive') {
       tone(320 + 80 * r, 180, 0.08, 0.35 * a + 0.04, 0, 'triangle'); if (e.other === 'glass') tone(1900, 1900, 0.12, 0.12 * a);
+    } else if (e.kind === 'fish') {
+      /* 魚の接触は静かに（音は出さない） */
+    } else if (e.kind === 'egg') {
+      tone(1100 + 300 * r, 800, 0.05, 0.15 * a + 0.02, 0, 'triangle');
     } else {
       if (e.other === 'glass') { const f = 1800 + 500 * r; tone(f, f, 0.14, 0.3 * a + 0.05); }                                          // 小石とグラス: 「カツッ」
       else tone(700 + 150 * r, 420, 0.07, 0.3 * a + 0.04, 0, 'triangle');
     }
   }
+  // 孵化: 小さな泡と波紋、「ぷるん」という音
+  function hatchFx(e, L) {
+    for (let i = 0; i < 7; i++) parts.push({ x: L.cx + e.x * L.hc + (Math.random() - 0.5) * 8 * dpr, y: L.yB - e.y * L.hc, vx: (Math.random() - 0.5) * 60 * dpr, vy: -(40 + Math.random() * 90) * dpr, life: 1, bubble: true });
+    if (audible()) { const lp = shape.pitch || 1; tone(520 * lp, 1500 * lp, 0.12, 0.35); tone(1500 * lp, 2300 * lp, 0.08, 0.15, 0.08); }
+  }
+  // クリックで揺れる: グラスをクリックすると、押した側と反対へ揺れ、水がふちに近ければ、しぶきになってこぼれる
+  let lastSpill = 0;
+  function spawnSplash(vol, L, dir) {   // dir > 0: 左のふちが下がる（反時計回りに傾く）ので左へ、dir < 0: 右へ
+    const sd = dir > 0 ? -1 : 1, lip = body.T(sd * shape.hw(1), 1), n = Math.min(44, 4 + Math.round(vol * 700));
+    for (let i = 0; i < n; i++) parts.push({ x: L.cx + lip[0] * L.hc, y: L.yB - lip[1] * L.hc, vx: sd * (60 + Math.random() * 260) * dpr, vy: -(220 + Math.random() * 520) * dpr, life: 0.7 + Math.random() * 0.5 });
+  }
+  function kickGlass(e) {
+    if (shape.mode) { clickSpecial(e); return; }
+    if (setupMode || !body.sil) return;
+    const L = layout(), r = canvas.getBoundingClientRect(), px = (e.clientX - r.left) * dpr, py = (e.clientY - r.top) * dpr;
+    const x = (px - L.cx) / L.hc, y = (L.yB - py) / L.hc;
+    if (!pointInPoly(body.sil.map((q) => body.T(q[0], q[1])), x, y)) return;
+    const dir = (x - body.X) < 0 ? -1 : 1, scale = 0.7 + 0.5 * Math.max(0, Math.min(1, y - body.Y));
+    const vol = body.kick(dir, scale);
+    if (vol > 0) spawnSplash(vol, L, dir);
+    lastSpill = body.spillTotal;
+    if (audible()) {
+      const lp = shape.pitch || 1; const f = 2200 + 400 * Math.random(); tone(f, f, 0.3, 0.3); tone(f * 2.7, f * 2.7, 0.12, 0.1);   // ガラスを指ではじく「チン」
+      if (body.V > 1e-3) { tone(260 * lp, 170 * lp, 0.3, 0.35 * Math.min(1, scale), 0.04); if (vol > 0) tone(700 * lp, 300 * lp, 0.2, 0.3, 0.06); }   // 中の水が揺れる「チャプ」
+    }
+  }
+  canvas.addEventListener('pointerdown', kickGlass);
   function chime() {
     if (!soundOn || !actx || actx.state !== 'running') return;
     [880, 1318].forEach((f, i) => { const t = actx.currentTime + i * 0.18, o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.25 * volume), t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 1.5); });
@@ -409,6 +513,7 @@
     return best;
   }
   function update(dt) {
+    if (shape.mode) { updateSpecial(dt); return; }
     const L = layout();
     body.tankW = L.tankW; body.tankH = L.tankH; body.wallW = L.tankW + 1.2;
     if (setupMode) { body.V = body.areaAt(levelT(0.5)); body.Vp = 0; body.step(dt, 0); }
@@ -418,7 +523,9 @@
       if (!isOver() && Math.abs(body.th) < 0.02) body.V = body.areaAt(levelT(progress()));
       body.step(dt, 0);
     }
-    for (const e of body.events) objSound(e);
+    { const dS = body.spillTotal - lastSpill; lastSpill = body.spillTotal;
+      if (dS > 0 && Math.abs(body.w) > 0.6) spawnSplash(dS, L, Math.sign(body.th) || 1); }   // 勢いのあるあふれは、壁を伝わず、しぶきになって跳ねる
+    for (const e of body.events) { if (e.kind === 'hatch') hatchFx(e, L); else objSound(e); }
     body.events = [];
     stepWave(dt);
 
@@ -446,13 +553,281 @@
         drop = null;
       }
     }
-    if (running) for (const p of parts) { p.vy += 1500 * dpr * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.6; }
-    parts = parts.filter((p) => p.life > 0);
+    stepParts(dt);
   }
 
   // ---- 描画 ----
   const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  // 満ちてくる水（画面いっぱい）
+  function drawPool(L, c, poolD) {
+    const hc = L.hc, poolY = L.yB - poolD * hc;
+    // 満ちてくる水: 画面いっぱいに広がり、水面はゆるやかに揺れる（ふちの向きに合わせた楕円の波紋つき）
+    if (poolD > 0.002) {
+      const amp = hc * 0.006, sf = (x) => poolY + Math.sin(x / (0.11 * hc) + spinT * 2.2) * amp + Math.sin(x / (0.26 * hc) - spinT * 1.4) * amp;
+      ctx.beginPath(); ctx.moveTo(0, L.yB);
+      for (let x = 0; x <= W + 8; x += 8) ctx.lineTo(x, sf(x));
+      ctx.lineTo(W, L.yB); ctx.closePath();
+      const g = ctx.createLinearGradient(0, poolY, 0, L.yB + 0.5 * hc); g.addColorStop(0, rgba(c, 0.5)); g.addColorStop(1, rgba(c.map((x) => x * 0.6), 0.75));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.beginPath(); for (let x = 0; x <= W + 8; x += 8) { if (x) ctx.lineTo(x, sf(x)); else ctx.moveTo(x, sf(x)); }
+      ctx.strokeStyle = 'rgba(235,248,255,0.85)'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+      for (const r of ripples) { if (!r.pool) continue; const k = 0.05 + r.age * 0.9; ctx.beginPath(); ctx.ellipse(L.cx, poolY + 2 * dpr, hc * k * 0.5, hc * k * 0.06, 0, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255,255,255,${0.7 * (1 - r.age / 1.6)})`; ctx.lineWidth = 1.4 * dpr; ctx.stroke(); }
+    }
+
+  }
+
+  // 落ちてくるしずくと、はねた水・泡
+  function drawDropAndParts(L, c) {
+    // 落ちてくるしずく
+    if (drop) { const r = 7 * dpr, str = 1 + Math.min(0.9, drop.vy / (2200 * dpr)); ctx.beginPath(); ctx.moveTo(L.cx, drop.y - r * 2 * str); ctx.quadraticCurveTo(L.cx + r * 1.1, drop.y - r * 0.2, L.cx, drop.y + r); ctx.quadraticCurveTo(L.cx - r * 1.1, drop.y - r * 0.2, L.cx, drop.y - r * 2 * str); ctx.fillStyle = rgba(c.map((x) => Math.min(255, x + 40)), 0.9); ctx.fill(); ctx.strokeStyle = 'rgba(235,248,255,0.8)'; ctx.lineWidth = 1.5 * dpr; ctx.stroke(); }
+    for (const q of parts) {
+      ctx.beginPath(); ctx.arc(q.x, q.y, (q.bubble ? 4 : 3) * dpr * q.life + 0.5, 0, 7);
+      if (q.bubble) { ctx.strokeStyle = `rgba(235,248,255,${0.9 * q.life})`; ctx.lineWidth = 1.3 * dpr; ctx.stroke(); } else { ctx.fillStyle = rgba(c, 0.85 * q.life); ctx.fill(); }
+    }
+
+  }
+
+  // 時間の文字: 0 を過ぎたらマイナスで進む
+  function drawText(L) {
+    const hc = L.hc;
+    // 文字: 0 を過ぎたらマイナスで進む
+    if (showText) {
+      const over = isOver(), total = setupMode ? Math.round((parseFloat($('min').value) || 0) * 60) : totalSec;
+      const shown = over ? Math.floor(elapsed - totalSec) : Math.max(0, Math.ceil(total - elapsed));
+      const hh = Math.floor(shown / 3600), mm = Math.floor(shown % 3600 / 60), ss = shown % 60;
+      const txt = (over && shown > 0 ? '-' : '') + (hh ? hh + ':' : '') + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+      const fs = Math.min(W * 0.16, H * 0.11), y = L.yB + 0.02 * H + fs * 0.95;
+      ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.lineWidth = fs * 0.12; ctx.strokeStyle = 'rgba(8,14,24,0.85)'; ctx.lineJoin = 'round'; ctx.strokeText(txt, L.cx, y);
+      ctx.fillStyle = over ? '#ff9a8a' : '#ffffff'; ctx.fillText(txt, L.cx, y);
+      if (label) { const f2 = fs * 0.32; ctx.font = `600 ${f2}px "Yu Gothic UI", Meiryo, sans-serif`; ctx.lineWidth = f2 * 0.2; ctx.strokeText(label, L.cx, y + f2 * 1.25); ctx.fillStyle = '#cfe3f7'; ctx.fillText(label, L.cx, y + f2 * 1.25); }
+    }
+  }
+
+  // =====================================================================
+  // 特別モード: 鹿威し・赤べこ（グラスではない見た目）
+  // 座標は「容器の高さ = 1」の世界座標（床の中心が原点、y は上向き）
+  // =====================================================================
+  let sp = null;
+  const SH = { px: 0.08, py: 0.74, armC: 0.38, r: 0.065, spoutX: -0.253, spoutY: 1.13, cupY: 0.88, rockX: 0.47, rockY: 0.52, basinX: -0.30, basinW: 0.5, basinTop: 0.22 };
+  const BK = { pivotX: -0.06, pivotY: 0.52, headX: 0.12, headY: 0.10, headR: 0.15, poolEnd: 0.52 };
+  function initSpecial() {
+    sp = { Vp: 0, sdrops: [], flash: 0, ls: 1, cyc: null, nextB: 0, pourVis: 0, lastPourSnd: -9, lastStrikeAt: -9, ts: 1,
+      tube: shape.mode === 'shishi' ? makeShishi() : null, beko: shape.mode === 'beko' ? makeBeko() : null, cupRip: 0 };
+  }
+  const bekoPoolD = (L) => Math.min(L.tankH, BK.poolEnd * progress() + (sp ? sp.Vp / L.tankW : 0));
+  function bekoHead() {   // 頭の円の中心（世界座標）。首の付け根を中心に、うなずく向きへ回る
+    const f = sp.beko.phi, c = Math.cos(f), s = Math.sin(f);
+    return { x: BK.pivotX + BK.headX * c + BK.headY * s, y: BK.pivotY - BK.headX * s + BK.headY * c, r: BK.headR };
+  }
+
+  // 鹿威しの「カーン」: 竹が石を打つ、よく響く高い音
+  function clack(speed) {
+    if (!audible()) return;
+    const a = Math.min(1, speed / 1.4) * 0.85 + 0.15;
+    tone(760, 760, 0.6, 0.5 * a); tone(1530, 1500, 0.32, 0.28 * a); tone(2310, 2300, 0.18, 0.12 * a); tone(3600, 2600, 0.04, 0.2 * a, 0, 'triangle');
+  }
+  function pourSound() { if (!audible()) return; const lp = shape.pitch || 1; tone(240 * lp, 150 * lp, 0.5, 0.28); tone(520 * lp, 320 * lp, 0.35, 0.14, 0.04); }
+  // 赤べこに水滴が当たった音（張り子の「ポコッ」）
+  function bekoKnock() { if (!audible()) return; tone(330, 200, 0.14, 0.5, 0, 'triangle'); tone(980, 760, 0.05, 0.2); tone(520, 360, 0.1, 0.18, 0.03); }
+
+  function stepParts(dt) {
+    if (running) for (const p of parts) { p.vy += (p.bubble ? -200 : 1500) * dpr * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * (p.bubble ? 0.9 : 1.6); }
+    parts = parts.filter((p) => p.life > 0);
+  }
+
+  function updateSpecial(dt) {
+    if (!sp) initSpecial();
+    const L = layout();
+    stepWave(dt);
+    sp.flash = Math.max(0, sp.flash - dt * 3); sp.pourVis = Math.max(0, sp.pourVis - dt * 3.5); sp.cupRip = Math.max(0, sp.cupRip - dt * 2);
+    if (setupMode) { if (sp.tube) sp.tube.V = 0.03; return; }
+    if (!running) return;
+    elapsed += dt;
+    if (!chimed && elapsed >= totalSec) { chimed = true; chime(); }
+    if (shape.mode === 'shishi') updateShishi(dt, L); else updateBeko(dt, L);
+    stepParts(dt);
+    sp.Vp = Math.min(sp.Vp, L.tankW * L.tankH);
+  }
+
+  // --- 鹿威し: 竹筒に水滴がたまり、傾いて水を出し、戻って石を打つ。石を打つ瞬間が拍に合う ---
+  function updateShishi(dt, L) {
+    const P = bpm > 0 ? 60 / bpm : 4, T0 = 1.17;
+    const move0 = T0 / Math.max(1, Math.min(6, T0 / (0.45 * P)));          // 傾き始めから石を打つまでの時間（早いテンポでは筒の動きを速める）
+    const Vtot = 0.075, fillT = Math.max(0.15, P - move0), nd = Math.max(2, Math.min(8, Math.round(fillT / 0.3)));
+    if (!sp.cyc) {
+      sp.ts = Math.max(1, Math.min(6, T0 / (0.45 * P)));
+      const B = sp.nextB > elapsed + move0 + 0.2 ? sp.nextB : (sp.nextB ? elapsed + P : P + 0.3), lead = sp.ls * move0, s = fillT / nd;
+      sp.cyc = { B, poured: false, move0, drops: [] };
+      for (let j = 0; j < nd; j++) sp.cyc.drops.push({ t: B - lead - (nd - 1 - j) * s, spawned: false, v: Vtot / nd });
+    }
+    const gW = 2600 * dpr / L.hc, tf = Math.sqrt(2 * (SH.spoutY - SH.cupY) / gW);
+    for (const d of sp.cyc.drops) if (!d.spawned && elapsed >= d.t - tf) { d.spawned = true; sp.sdrops.push({ y: SH.spoutY, vy: 0, v: d.v }); }
+    for (let i = sp.sdrops.length - 1; i >= 0; i--) {
+      const dr = sp.sdrops[i]; dr.vy += gW * dt; dr.y -= dr.vy * dt;
+      if (dr.y <= SH.cupY) { sp.tube.addWater(dr.v); sp.sdrops.splice(i, 1); sp.cupRip = 1; if (bpm > 0 || true) landSound('glassWater'); }
+    }
+    sp.tube.step(dt * sp.ts);
+    for (const e of sp.tube.events) {
+      if (e.kind === 'pour') {
+        sp.pourVis = 1; if (sp.cyc) sp.cyc.poured = true;
+        if (isOver()) sp.Vp += e.vol;                                       // 時間を過ぎたら、受け皿からあふれて部屋にたまる
+        if (elapsed - sp.lastPourSnd > 0.35) { sp.lastPourSnd = elapsed; pourSound(); }
+      } else if (e.kind === 'strike') {
+        const firstStrike = sp.cyc && sp.cyc.poured && elapsed - sp.lastStrikeAt > 0.25;
+        sp.lastStrikeAt = elapsed; sp.flash = 1; clack(e.speed);
+        if (firstStrike) {                                                  // 拍とのずれを測って、次の周期の水滴のタイミングを直す
+          const err = elapsed - sp.cyc.B;
+          sp.ls = Math.max(0.3, Math.min(2.2, sp.ls + 0.8 * err / sp.cyc.move0));
+          sp.nextB = sp.cyc.B + P; sp.cyc = null;
+        }
+      }
+    }
+    sp.tube.events = [];
+  }
+
+  // --- 赤べこ: 水滴が頭に当たるたびに、首が揺れる。水は最初から部屋にたまっていく ---
+  function updateBeko(dt, L) {
+    sp.beko.step(dt);
+    const beat = bpm > 0 ? 60 / bpm : dripEvery, y0 = -20 * dpr, Gp = 2600 * dpr, hd = bekoHead();
+    const hx = hd.x, headTop = hd.y + Math.sqrt(Math.max(0.0004, hd.r * hd.r - hx * hx));
+    const headY = L.yB - headTop * L.hc, poolY = L.yB - bekoPoolD(L) * L.hc, onHead = headY <= poolY;
+    const ly = onHead ? headY : poolY;
+    if (!drop) {
+      const tf = Math.sqrt(2 * Math.max(10, ly - y0) / Gp);
+      if (nextLand === 0) nextLand = elapsed + Math.max(0.5, tf + 0.15);
+      if (elapsed >= nextLand - tf) { drop = { y: y0, vy: 0 }; nextLand += beat; if (nextLand < elapsed + tf) nextLand = elapsed + tf + beat; }
+    }
+    if (drop) {
+      drop.vy += Gp * dt; drop.y += drop.vy * dt;
+      if (drop.y >= ly) {
+        if (onHead) { sp.beko.hit(1); bekoKnock(); }
+        else { addRipple(true); landSound('pool'); }
+        for (let i = 0; i < 6; i++) parts.push({ x: L.cx + (Math.random() - 0.5) * 6 * dpr, y: ly, vx: (Math.random() - 0.5) * 160 * dpr, vy: -(120 + Math.random() * 220) * dpr, life: 1 });
+        if (isOver()) sp.Vp += DROP_VOL;
+        drop = null;
+      }
+    }
+  }
+
+  // --- 描画 ---
+  function drawSpecial() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
+    if (!sp) initSpecial();
+    const L = layout(), c = liquidRGB();
+    ctx.fillStyle = 'rgba(220,235,255,0.16)'; ctx.fillRect(0, L.yB, W, 2 * dpr);   // 部屋の床
+    let poolD;
+    if (shape.mode === 'shishi') { drawShishi(L, c); poolD = Math.min(L.tankH, sp.Vp / L.tankW); }
+    else { drawBeko(L, c); poolD = bekoPoolD(L); }
+    drawPool(L, c, poolD);
+    drawDropAndParts(L, c);
+    drawText(L);
+  }
+
+  function bambooGrad(x0, y0, x1, y1) {
+    const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, '#5e8a3a'); g.addColorStop(0.35, '#a9c46a'); g.addColorStop(0.7, '#6f9a42'); g.addColorStop(1, '#46682a'); return g;
+  }
+  function drawShishi(L, c) {
+    const hc = L.hc, X = (x) => L.cx + x * hc, Y = (y) => L.yB - y * hc, t = sp.tube, a = t.a, arm = SHISHI.arm, r = SH.r * hc;
+    // 受け皿（つくばい）: 石の鉢。水位は時間とともに上がる
+    { const bx = X(SH.basinX), rimY = Y(SH.basinTop), rw = SH.basinW / 2 * hc, level = Y(0.03 + 0.15 * Math.min(1, progress()));
+      ctx.beginPath(); ctx.moveTo(bx - rw, rimY); ctx.bezierCurveTo(bx - rw, Y(0.05), bx - rw * 0.55, Y(0.0), bx, Y(0.0)); ctx.bezierCurveTo(bx + rw * 0.55, Y(0.0), bx + rw, Y(0.05), bx + rw, rimY); ctx.closePath();
+      const g = ctx.createLinearGradient(bx - rw, 0, bx + rw, 0); g.addColorStop(0, '#6c7279'); g.addColorStop(0.35, '#9aa1a8'); g.addColorStop(1, '#585e64'); ctx.fillStyle = g; ctx.fill();
+      ctx.beginPath(); ctx.ellipse(bx, rimY, rw, 0.04 * hc, 0, 0, Math.PI * 2); ctx.fillStyle = '#3e444a'; ctx.fill(); ctx.strokeStyle = '#b5bbc2'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+      const lvH = 0.03 + 0.15 * Math.min(1, progress()), wy = Math.max(level, rimY), wr = rw * (0.46 + 0.5 * (lvH - 0.03) / (SH.basinTop - 0.03));
+      ctx.beginPath(); ctx.ellipse(bx, wy, wr, 0.036 * hc, 0, 0, Math.PI * 2); ctx.fillStyle = rgba(c, 0.8); ctx.fill(); ctx.strokeStyle = 'rgba(235,248,255,0.9)'; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
+      if (sp.cupRip > 0 || sp.pourVis > 0) { const k = 1 - Math.max(sp.cupRip, sp.pourVis); ctx.beginPath(); ctx.ellipse(X(-0.14), wy, wr * (0.1 + 0.5 * k), 0.036 * hc * (0.1 + 0.5 * k), 0, 0, 7); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.stroke(); }
+      if (isOver()) {   // 受け皿からあふれた水が、鉢の外側を伝って流れ落ちる
+        ctx.strokeStyle = rgba(c, 0.65); ctx.lineWidth = 4 * dpr; ctx.lineCap = 'round';
+        for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(bx + sd * rw, rimY); ctx.quadraticCurveTo(bx + sd * (rw + 0.02 * hc), Y(0.12), bx + sd * (rw * 0.6), L.yB); ctx.stroke(); }
+      }
+    }
+    // 支柱・台座
+    ctx.fillStyle = (() => { const g = ctx.createLinearGradient(X(0.04), 0, X(0.12), 0); g.addColorStop(0, '#7a5230'); g.addColorStop(0.5, '#a97b4a'); g.addColorStop(1, '#5a3a20'); return g; })();
+    ctx.fillRect(X(SH.px) - 0.035 * hc, Y(SH.py), 0.07 * hc, SH.py * hc);
+    ctx.fillStyle = '#5a3a20'; ctx.fillRect(X(SH.px) - 0.11 * hc, L.yB - 0.04 * hc, 0.22 * hc, 0.04 * hc);
+    // 石（筒の閉じた側が当たる）
+    { const rx = X(SH.rockX), topY = Y(SH.rockY + 0.09), hh = L.yB - topY; ctx.beginPath(); ctx.moveTo(rx - 0.2 * hc, L.yB);
+      ctx.bezierCurveTo(rx - 0.22 * hc, topY + hh * 0.45, rx - 0.13 * hc, topY, rx, topY); ctx.bezierCurveTo(rx + 0.13 * hc, topY, rx + 0.22 * hc, topY + hh * 0.45, rx + 0.2 * hc, L.yB); ctx.closePath();
+      const g = ctx.createRadialGradient(rx - 0.05 * hc, topY + hh * 0.3, 0, rx, topY + hh * 0.5, 0.26 * hc); g.addColorStop(0, '#aeb4ba'); g.addColorStop(1, '#4a5056'); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = 'rgba(20,25,30,0.5)'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+      if (sp.flash > 0) { const k = 1 - sp.flash; ctx.beginPath(); ctx.arc(X(0.45), Y(0.655), (0.03 + 0.1 * k) * hc, 0, 7); ctx.strokeStyle = `rgba(255,245,200,${0.8 * sp.flash})`; ctx.lineWidth = 3 * dpr; ctx.stroke(); } }
+    // 竹の樋（水の出口）: 左上から伸びて、筒の口の真上で水を落とす
+    { const sx = X(SH.spoutX), sy = Y(SH.spoutY + 0.03); ctx.lineCap = 'round'; ctx.strokeStyle = bambooGrad(sx - 0.5 * hc, sy - 0.3 * hc, sx, sy); ctx.lineWidth = 0.075 * hc;
+      ctx.beginPath(); ctx.moveTo(X(-1.05), Y(1.62)); ctx.lineTo(sx, sy); ctx.stroke();
+      ctx.strokeStyle = 'rgba(30,60,20,0.5)'; ctx.lineWidth = 2 * dpr; for (const k of [0.3, 0.6]) { const bx = X(-1.05) + (sx - X(-1.05)) * k, by = Y(1.62) + (sy - Y(1.62)) * k; ctx.beginPath(); ctx.moveTo(bx - 3 * dpr, by - 0.036 * hc); ctx.lineTo(bx + 3 * dpr, by + 0.036 * hc); ctx.stroke(); }
+      // 先端にふくらむしずく
+      let nextIn = 9; if (sp.cyc) for (const d of sp.cyc.drops) if (!d.spawned) nextIn = Math.min(nextIn, d.t - elapsed);
+      const f = 1 - Math.max(0, Math.min(1, nextIn / 0.5)), rr = (0.006 + 0.016 * f) * hc;
+      ctx.beginPath(); ctx.arc(sx, sy + 0.036 * hc + rr, rr, 0, 7); ctx.fillStyle = rgba(c, 0.9); ctx.fill(); ctx.strokeStyle = 'rgba(235,248,255,0.8)'; ctx.lineWidth = 1.2 * dpr; ctx.stroke(); }
+    // 竹筒（支点で回る）
+    ctx.save(); ctx.translate(X(SH.px), Y(SH.py)); ctx.rotate(a);
+    const U0 = -arm * hc, U1 = SH.armC * hc, tubePath = () => { ctx.beginPath(); ctx.moveTo(U0, -r); ctx.lineTo(U1 - r * 0.9, -r); ctx.quadraticCurveTo(U1, -r, U1, 0); ctx.quadraticCurveTo(U1, r, U1 - r * 0.9, r); ctx.lineTo(U0, r); ctx.closePath(); };
+    tubePath(); ctx.fillStyle = bambooGrad(0, -r, 0, r); ctx.fill(); ctx.strokeStyle = 'rgba(30,60,20,0.7)'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+    ctx.strokeStyle = 'rgba(40,70,25,0.55)'; ctx.lineWidth = 3 * dpr; for (const u of [-0.05, 0.16, 0.34]) { ctx.beginPath(); ctx.moveTo(u * hc, -r); ctx.lineTo(u * hc, r); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(U0 + 6 * dpr, -r * 0.55); ctx.lineTo(U1 - r * 1.2, -r * 0.55); ctx.strokeStyle = 'rgba(255,255,230,0.35)'; ctx.lineWidth = 3 * dpr; ctx.stroke();
+    // 口（斜めに切った断面）。中は暗い
+    ctx.beginPath(); ctx.ellipse(U0, 0, r * 0.38, r, 0, 0, Math.PI * 2); ctx.fillStyle = '#2d3a1c'; ctx.fill(); ctx.strokeStyle = '#c8d98a'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+    // 口の中の水（水面は地面と水平）
+    if (t.V > 1e-4) {
+      ctx.save(); tubePath(); ctx.clip(); ctx.beginPath(); ctx.rect(U0 - r, -r, (0.3 + arm * 0) * hc + r, 2 * r); ctx.clip(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const px = X(SH.px), py = Y(SH.py), ux = (-arm + 0.15) * hc, yBottom = py + ux * Math.sin(a) + r * Math.cos(a), level = yBottom - (t.V / SHISHI.vmax) * 1.7 * r;
+      ctx.beginPath(); ctx.rect(px - 2 * hc, level, 4 * hc, 2 * hc); ctx.fillStyle = rgba(c, 0.85); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(px - 2 * hc, level); ctx.lineTo(px + 2 * hc, level); ctx.strokeStyle = 'rgba(235,248,255,0.9)'; ctx.lineWidth = 1.6 * dpr; ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+    // 支点の軸
+    ctx.beginPath(); ctx.arc(X(SH.px), Y(SH.py), 0.028 * hc, 0, 7); ctx.fillStyle = '#3a2a1a'; ctx.fill(); ctx.strokeStyle = '#c9a66b'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+    // 筒から出る水（口が下がっているあいだ）
+    if (sp.pourVis > 0.05) {
+      const lipX = X(SH.px - arm * Math.cos(a)), lipY = Y(SH.py + arm * Math.sin(a)), endY = Y(0.03 + 0.15 * Math.min(1, progress())) - 2 * dpr, w = (2 + 8 * sp.pourVis) * dpr;
+      const g = ctx.createLinearGradient(0, lipY, 0, endY); g.addColorStop(0, rgba(c, 0.9)); g.addColorStop(1, rgba(c, 0.6));
+      ctx.strokeStyle = g; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(lipX, lipY); ctx.quadraticCurveTo(lipX - 0.03 * hc, (lipY + endY) / 2, lipX - 0.04 * hc, endY); ctx.stroke();
+      ctx.setLineDash([8 * dpr, 12 * dpr]); ctx.lineDashOffset = -spinT * 160 * dpr; ctx.strokeStyle = 'rgba(240,250,255,0.75)'; ctx.lineWidth = 1.3 * dpr; ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 落ちるしずく
+    for (const dr of sp.sdrops) { const x = X(SH.spoutX), y = Y(dr.y), rr = 5 * dpr; ctx.beginPath(); ctx.moveTo(x, y - rr * 2); ctx.quadraticCurveTo(x + rr, y - rr * 0.2, x, y + rr); ctx.quadraticCurveTo(x - rr, y - rr * 0.2, x, y - rr * 2); ctx.fillStyle = rgba(c, 0.9); ctx.fill(); }
+  }
+
+  function drawBeko(L, c) {
+    const hc = L.hc, X = (x) => L.cx + x * hc, Y = (y) => L.yB - y * hc, red = '#d8342c', dark = '#9e211b', cream = '#fff1c9', phi = sp.beko.phi;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const bodyY = 0.38, legs = [-0.78, -0.62, -0.30, -0.14];
+    // 足
+    for (const lx of legs) { const g = ctx.createLinearGradient(X(lx - 0.05), 0, X(lx + 0.05), 0); g.addColorStop(0, dark); g.addColorStop(0.5, red); g.addColorStop(1, dark); ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(X(lx) - 0.05 * hc, Y(0.24), 0.1 * hc, 0.24 * hc, 0.03 * hc); ctx.fill(); ctx.fillStyle = '#2b1a14'; ctx.fillRect(X(lx) - 0.05 * hc, L.yB - 0.03 * hc, 0.1 * hc, 0.03 * hc); }
+    // しっぽ
+    ctx.strokeStyle = dark; ctx.lineWidth = 0.035 * hc; ctx.beginPath(); ctx.moveTo(X(-0.84), Y(0.44)); ctx.quadraticCurveTo(X(-0.97), Y(0.42 + 0.04 * Math.sin(spinT * 1.3)), X(-0.95), Y(0.26)); ctx.stroke();
+    // 胴体
+    ctx.beginPath(); ctx.ellipse(X(-0.43), Y(bodyY), 0.42 * hc, 0.2 * hc, 0, 0, Math.PI * 2);
+    const bg = ctx.createRadialGradient(X(-0.5), Y(bodyY + 0.1), 0, X(-0.43), Y(bodyY), 0.45 * hc); bg.addColorStop(0, '#f0584d'); bg.addColorStop(1, red); ctx.fillStyle = bg; ctx.fill(); ctx.strokeStyle = dark; ctx.lineWidth = 2.5 * dpr; ctx.stroke();
+    ctx.fillStyle = cream; for (const [sx, sy, sr] of [[-0.62, 0.42, 0.045], [-0.36, 0.46, 0.04], [-0.5, 0.32, 0.035], [-0.26, 0.34, 0.04], [-0.72, 0.33, 0.03]]) { ctx.beginPath(); ctx.arc(X(sx), Y(sy), sr * hc, 0, 7); ctx.fill(); }
+    // 首（頭の下から、胴体へ）
+    ctx.fillStyle = red; ctx.strokeStyle = dark; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.roundRect(X(BK.pivotX) - 0.07 * hc, Y(0.58), 0.14 * hc, 0.16 * hc, 0.03 * hc); ctx.fill(); ctx.stroke();
+    // 頭（首の付け根で回る）
+    ctx.save(); ctx.translate(X(BK.pivotX), Y(BK.pivotY)); ctx.rotate(phi);
+    const hx = BK.headX * hc, hy = -BK.headY * hc, R = BK.headR * hc;
+    ctx.fillStyle = red; ctx.strokeStyle = dark;
+    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.ellipse(hx + sd * R * 0.95, hy - R * 0.05, R * 0.4, R * 0.2, sd * 0.3, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }   // 耳
+    ctx.fillStyle = '#f3e3b0'; for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(hx + sd * R * 0.45, hy - R * 0.85); ctx.lineTo(hx + sd * R * 0.6, hy - R * 1.45); ctx.lineTo(hx + sd * R * 0.15, hy - R * 0.95); ctx.closePath(); ctx.fill(); ctx.stroke(); }   // つの
+    ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); const hg = ctx.createRadialGradient(hx - R * 0.3, hy - R * 0.3, 0, hx, hy, R * 1.1); hg.addColorStop(0, '#f0584d'); hg.addColorStop(1, red); ctx.fillStyle = hg; ctx.fill(); ctx.lineWidth = 2.5 * dpr; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(hx + R * 0.45, hy + R * 0.35, R * 0.55, R * 0.4, 0, 0, Math.PI * 2); ctx.fillStyle = '#ff8a7a'; ctx.fill(); ctx.stroke();   // 鼻づら
+    ctx.fillStyle = '#2b1a14'; for (const sd of [-1, 1]) { ctx.beginPath(); ctx.arc(hx + R * 0.45 + sd * R * 0.2, hy + R * 0.38, R * 0.08, 0, 7); ctx.fill(); }   // 鼻の穴
+    ctx.beginPath(); ctx.ellipse(hx - R * 0.15, hy - R * 0.15, R * 0.14, R * 0.2, 0, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.beginPath(); ctx.arc(hx - R * 0.1, hy - R * 0.13, R * 0.08, 0, 7); ctx.fillStyle = '#111'; ctx.fill();   // 目
+    ctx.fillStyle = cream; ctx.beginPath(); ctx.arc(hx - R * 0.45, hy - R * 0.55, R * 0.13, 0, 7); ctx.fill();   // 頭のぶち
+    ctx.restore();
+    // 首のまわりの飾り（金の輪）
+    ctx.strokeStyle = '#e2b24a'; ctx.lineWidth = 3 * dpr; ctx.beginPath(); ctx.moveTo(X(BK.pivotX) - 0.07 * hc, Y(0.54)); ctx.lineTo(X(BK.pivotX) + 0.07 * hc, Y(0.54)); ctx.stroke();
+  }
+
+  // 赤べこは、頭をクリックしてもうなずく
+  function clickSpecial(e) {
+    if (setupMode || !sp || shape.mode !== 'beko') return;
+    const L = layout(), r = canvas.getBoundingClientRect(), x = ((e.clientX - r.left) * dpr - L.cx) / L.hc, y = (L.yB - (e.clientY - r.top) * dpr) / L.hc, hd = bekoHead();
+    if (Math.hypot(x - hd.x, y - hd.y) < hd.r * 1.3) { sp.beko.hit(0.8); bekoKnock(); }
+  }
+
   function draw() {
+    if (shape.mode) { drawSpecial(); return; }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     const L = layout(), hc = L.hc, hw = shape.hw, c = liquidRGB(), from = shape.from || 0;
@@ -511,6 +886,17 @@
       } else if (o.kind === 'olive') {
         ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fillStyle = '#8fa73a'; ctx.fill(); ctx.strokeStyle = '#5f7424'; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
         ctx.beginPath(); ctx.arc(r * 0.45, 0, r * 0.32, 0, 7); ctx.fillStyle = '#c0392b'; ctx.fill();
+      } else if (o.kind === 'egg') {
+        ctx.beginPath(); ctx.ellipse(0, 0, r * 0.9, r, 0, 0, 7); ctx.fillStyle = 'rgba(255,238,215,0.82)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.3 * dpr; ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, r * 0.1, r * 0.28, 0, 7); ctx.fillStyle = 'rgba(190,70,40,0.75)'; ctx.fill();   // 中の赤い点（胚）
+        ctx.beginPath(); ctx.arc(-r * 0.3, -r * 0.4, r * 0.2, 0, 7); ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fill();
+      } else if (o.kind === 'fish') {
+        const d = o.dir >= 0 ? 1 : -1, wig = Math.sin(spinT * 9 + o.id * 2) * 0.35, pal = [['#ff8a3c', '#ffb36b'], ['#e8412f', '#ff8a70'], ['#ffc43a', '#ffe08a']][o.id % 3];
+        ctx.scale(d, 1); ctx.rotate(o.th * d);
+        ctx.fillStyle = pal[0]; ctx.beginPath(); ctx.moveTo(-r * 0.7, 0); ctx.lineTo(-r * 1.7, -r * (0.7 + wig)); ctx.lineTo(-r * 1.7, r * (0.7 - wig)); ctx.closePath(); ctx.fill();   // 尾
+        ctx.beginPath(); ctx.ellipse(0, 0, r * 1.15, r * 0.75, 0, 0, 7); ctx.fillStyle = pal[0]; ctx.fill();
+        ctx.beginPath(); ctx.ellipse(r * 0.15, r * 0.2, r * 0.7, r * 0.35, 0, 0, 7); ctx.fillStyle = pal[1]; ctx.fill();
+        ctx.beginPath(); ctx.arc(r * 0.65, -r * 0.15, r * 0.17, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.beginPath(); ctx.arc(r * 0.7, -r * 0.15, r * 0.08, 0, 7); ctx.fillStyle = '#111'; ctx.fill();
       } else {
         ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fillStyle = ['#9aa3ad', '#b49a7c', '#7e8c96'][Math.floor(Math.abs(o.x * 100 + o.r * 1000)) % 3]; ctx.fill(); ctx.strokeStyle = 'rgba(30,40,50,0.5)'; ctx.lineWidth = 1.2 * dpr; ctx.stroke();
         ctx.beginPath(); ctx.arc(-r * 0.3, -r * 0.3, r * 0.25, 0, 7); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill();
@@ -533,7 +919,7 @@
     });
 
     // あふれる水: ふちから、グラスの外側の壁を伝って流れ落ちる（傾いているときは低いほうだけ）
-    if (!setupMode && body.spill > 0.003) {
+    if (!setupMode && body.spill > 0.003 && Math.abs(body.w) < 0.6) {
       const lips = [body.T(-hw(1), 1), body.T(hw(1), 1)], low = Math.min(lips[0][1], lips[1][1]);
       local(() => {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -548,35 +934,11 @@
       });
     }
 
-    // 満ちてくる水: 画面いっぱいに広がり、水面はゆるやかに揺れる（ふちの向きに合わせた楕円の波紋つき）
-    if (body.poolD > 0.002) {
-      const amp = hc * 0.006, sf = (x) => poolY + Math.sin(x / (0.11 * hc) + spinT * 2.2) * amp + Math.sin(x / (0.26 * hc) - spinT * 1.4) * amp;
-      ctx.beginPath(); ctx.moveTo(0, L.yB);
-      for (let x = 0; x <= W + 8; x += 8) ctx.lineTo(x, sf(x));
-      ctx.lineTo(W, L.yB); ctx.closePath();
-      const g = ctx.createLinearGradient(0, poolY, 0, L.yB + 0.5 * hc); g.addColorStop(0, rgba(c, 0.5)); g.addColorStop(1, rgba(c.map((x) => x * 0.6), 0.75));
-      ctx.fillStyle = g; ctx.fill();
-      ctx.beginPath(); for (let x = 0; x <= W + 8; x += 8) { if (x) ctx.lineTo(x, sf(x)); else ctx.moveTo(x, sf(x)); }
-      ctx.strokeStyle = 'rgba(235,248,255,0.85)'; ctx.lineWidth = 2 * dpr; ctx.stroke();
-      for (const r of ripples) { if (!r.pool) continue; const k = 0.05 + r.age * 0.9; ctx.beginPath(); ctx.ellipse(L.cx, poolY + 2 * dpr, hc * k * 0.5, hc * k * 0.06, 0, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255,255,255,${0.7 * (1 - r.age / 1.6)})`; ctx.lineWidth = 1.4 * dpr; ctx.stroke(); }
-    }
+    drawPool(L, c, body.poolD);
 
-    // 落ちてくるしずく
-    if (drop) { const r = 7 * dpr, str = 1 + Math.min(0.9, drop.vy / (2200 * dpr)); ctx.beginPath(); ctx.moveTo(L.cx, drop.y - r * 2 * str); ctx.quadraticCurveTo(L.cx + r * 1.1, drop.y - r * 0.2, L.cx, drop.y + r); ctx.quadraticCurveTo(L.cx - r * 1.1, drop.y - r * 0.2, L.cx, drop.y - r * 2 * str); ctx.fillStyle = rgba(c.map((x) => Math.min(255, x + 40)), 0.9); ctx.fill(); ctx.strokeStyle = 'rgba(235,248,255,0.8)'; ctx.lineWidth = 1.5 * dpr; ctx.stroke(); }
-    for (const q of parts) { ctx.beginPath(); ctx.arc(q.x, q.y, 3 * dpr * q.life + 0.5, 0, 7); ctx.fillStyle = rgba(c, 0.85 * q.life); ctx.fill(); }
+    drawDropAndParts(L, c);
 
-    // 文字: 0 を過ぎたらマイナスで進む
-    if (showText) {
-      const over = isOver(), total = setupMode ? Math.round((parseFloat($('min').value) || 0) * 60) : totalSec;
-      const shown = over ? Math.floor(elapsed - totalSec) : Math.max(0, Math.ceil(total - elapsed));
-      const hh = Math.floor(shown / 3600), mm = Math.floor(shown % 3600 / 60), ss = shown % 60;
-      const txt = (over && shown > 0 ? '-' : '') + (hh ? hh + ':' : '') + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
-      const fs = Math.min(W * 0.16, H * 0.11), y = L.yB + 0.02 * H + fs * 0.95;
-      ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      ctx.lineWidth = fs * 0.12; ctx.strokeStyle = 'rgba(8,14,24,0.85)'; ctx.lineJoin = 'round'; ctx.strokeText(txt, L.cx, y);
-      ctx.fillStyle = over ? '#ff9a8a' : '#ffffff'; ctx.fillText(txt, L.cx, y);
-      if (label) { const f2 = fs * 0.32; ctx.font = `600 ${f2}px "Yu Gothic UI", Meiryo, sans-serif`; ctx.lineWidth = f2 * 0.2; ctx.strokeText(label, L.cx, y + f2 * 1.25); ctx.fillStyle = '#cfe3f7'; ctx.fillText(label, L.cx, y + f2 * 1.25); }
-    }
+    drawText(L);
   }
 
   // ---- 操作 ----
@@ -584,7 +946,7 @@
   const setSndLabel = () => { $('snd').textContent = soundOn ? '🔊 Sound ON' : '🔇 Sound OFF'; };
   function toggleRun() { if (setupMode) return; running = !running; setGoLabel(); }
   function toggleSound() { soundOn = !soundOn; if (soundOn) ensureAudio(); setSndLabel(); }
-  function clearRun() { elapsed = 0; chimed = false; drop = null; parts = []; nextLand = 0; ripples = []; body = makeBody(shape, 1.5, 1.08); }
+  function clearRun() { elapsed = 0; chimed = false; drop = null; parts = []; nextLand = 0; ripples = []; body = newBody(); sp = null; }
   // リセット: 設定画面に戻る（直前の時間・テンポ・見た目が選ばれたまま）
   function toSetup() {
     if (setupMode) return;
@@ -618,12 +980,12 @@
   function refreshSetup() { $('min').value = Math.round(totalSec / 60 * 100) / 100; $('bpm').value = bpm; markMin(); markBpm(); markShape(); }
   for (const m of [5, 10, 25, 45, 60]) { const b = document.createElement('button'); b.textContent = m; b.dataset.m = m; b.onclick = () => { $('min').value = m; markMin(); }; $('mins').appendChild(b); }
   for (const bp of [0, 60, 80, 100, 120]) { const b = document.createElement('button'); b.textContent = bp ? bp : 'Off'; b.dataset.b = bp; b.onclick = () => { $('bpm').value = bp; markBpm(); }; $('bpms').appendChild(b); }
-  for (const [k, sh] of Object.entries(SHAPES)) { const b = document.createElement('button'); b.textContent = sh.name; b.dataset.k = k; b.onclick = () => { curKey = k; shape = sh; body = makeBody(shape, 1.5, 1.08); markShape(); }; $('shapes').appendChild(b); }
+  for (const [k, sh] of Object.entries(SHAPES)) { const b = document.createElement('button'); b.textContent = sh.name; b.dataset.k = k; b.onclick = () => { curKey = k; shape = sh; body = newBody(); sp = null; markShape(); }; $('shapes').appendChild(b); }
   $('min').oninput = markMin; $('bpm').oninput = markBpm;
   refreshSetup(); setSndLabel(); syncMenu();
 
   // 確認用: ?at=600 で 600 秒経過した状態にして、settle=秒 だけ物理を進める
-  if (Q.has('at')) { elapsed = parseFloat(Q.get('at')) || 0; body.V = body.areaAt(levelT(Math.min(1, elapsed / totalSec))); }
+  if (Q.has('at')) { elapsed = parseFloat(Q.get('at')) || 0; if (body) body.V = body.areaAt(levelT(Math.min(1, elapsed / totalSec))); }
   if (!setupMode) running = true;
   setGoLabel();
   if (Q.has('settle')) { const sec = Math.max(1, parseFloat(Q.get('settle')) || 1); for (let i = 0; i < sec * 60; i++) update(1 / 60); }
