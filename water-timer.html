@@ -94,8 +94,8 @@
     fishbowl: { name: 'Fishbowl / 金魚鉢', hw: (t) => t > 0.86 ? 0.2 : (circ(0.45, 0.45)(t) > 0.2 || t < 0.5 ? circ(0.45, 0.45)(t) : Math.max(0.2, circ(0.45, 0.45)(t))), tint: [90, 190, 255], objs: [['egg', 5]], pitch: 0.95, kick: 1.92 },  
     tube:     { name: 'Test tube / 試験管', hw: (t) => t < 0.1 ? circ(0.1, 0.1)(t) * 0.8 : 0.08, tint: [120, 255, 140], ticks: true, foot: true, pitch: 1.45, kick: 2.40 },  
     vase:     { name: 'Vase / 花瓶', hw: (t) => t < 0.75 ? 0.08 + 0.2 * Math.sin(Math.PI * t / 0.75) : 0.08 + 0.02 * (t - 0.75) / 0.25, tint: [110, 200, 230], flower: true, pitch: 1.0, kick: 1.28 },  
-    shishi:   { name: 'Shishi-odoshi / 鹿威し', mode: 'shishi', tint: [90, 185, 255], pitch: 1.0 },  
-    beko:     { name: 'Akabeko / 赤べこ', mode: 'beko', tint: [90, 185, 255], pitch: 1.0 },  
+    shishi:   { name: 'Shishi-odoshi / 鹿威し', mode: 'shishi', hidden: true, tint: [90, 185, 255], pitch: 1.0 },  
+    beko:     { name: 'Akabeko / 赤べこ', mode: 'beko', hidden: true, tint: [90, 185, 255], pitch: 1.0 },  
   };  
     
   // ---- 多角形の計算 ----  
@@ -374,7 +374,9 @@
   const ui = Q.get('ui') !== '0';
   let totalSec = Math.max(1, (parseFloat(Q.get('min') || '25') || 0) * 60 + (parseFloat(Q.get('sec') || '0') || 0));
   let bpm = Math.max(0, Math.min(240, parseFloat(Q.get('bpm') || (ui ? '60' : '0')) || 0));
-  let curKey = SHAPES[Q.get('shape')] ? Q.get('shape') : 'tumbler';
+  const DEV = Q.get('dev') === '1';   // 非公開のスタイル（鹿威し・赤べこ）は ?dev=1 のときだけ出す
+  const usable = (k) => SHAPES[k] && (DEV || !SHAPES[k].hidden);
+  let curKey = usable(Q.get('shape')) ? Q.get('shape') : 'tumbler';
   let shape = SHAPES[curKey];
   let soundOn = Q.get('sound') !== '0';
   // 操作バーつきで開いたときは、まず時間・テンポ・見た目を決める設定画面を出す（OBS用の ui=0 では出さない）
@@ -980,7 +982,7 @@
   function refreshSetup() { $('min').value = Math.round(totalSec / 60 * 100) / 100; $('bpm').value = bpm; markMin(); markBpm(); markShape(); }
   for (const m of [5, 10, 25, 45, 60]) { const b = document.createElement('button'); b.textContent = m; b.dataset.m = m; b.onclick = () => { $('min').value = m; markMin(); }; $('mins').appendChild(b); }
   for (const bp of [0, 60, 80, 100, 120]) { const b = document.createElement('button'); b.textContent = bp ? bp : 'Off'; b.dataset.b = bp; b.onclick = () => { $('bpm').value = bp; markBpm(); }; $('bpms').appendChild(b); }
-  for (const [k, sh] of Object.entries(SHAPES)) { const b = document.createElement('button'); b.textContent = sh.name; b.dataset.k = k; b.onclick = () => { curKey = k; shape = sh; body = newBody(); sp = null; markShape(); }; $('shapes').appendChild(b); }
+  for (const [k, sh] of Object.entries(SHAPES)) { if (!usable(k)) continue; const b = document.createElement('button'); b.textContent = sh.name; b.dataset.k = k; b.onclick = () => { curKey = k; shape = sh; body = newBody(); sp = null; markShape(); }; $('shapes').appendChild(b); }
   $('min').oninput = markMin; $('bpm').oninput = markBpm;
   refreshSetup(); setSndLabel(); syncMenu();
 
