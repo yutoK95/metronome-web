@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Timer / 水がたまるタイマー</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; }
+  body.ui { background: radial-gradient(ellipse at 50% 40%, #2a3b52, #0c121a); }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #bar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); display: none; gap: 10px; align-items: center; justify-content: center;
+    padding: 10px 12px; border-radius: 14px; background: rgba(15, 22, 32, 0.8); }
+  body.run #bar { display: flex; }
+  button { font: inherit; color: #dbe6f3; background: #223249; border: 1px solid #3a4b63; border-radius: 8px; cursor: pointer;
+    height: 40px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+  button:hover { background: #2d4260; }
+  #bar button { width: 128px; padding: 0; font-size: 15px; }
+  #setup { position: fixed; left: 28px; top: 50%; transform: translateY(-50%); width: 320px; padding: 20px; border-radius: 16px; display: none;
+    background: rgba(15, 22, 32, 0.88); color: #dbe6f3; font-size: 14px; max-height: calc(100% - 24px); overflow-y: auto; box-sizing: border-box; }
+  body.setup #setup { display: block; }
+  #setup h2 { margin: 0 0 6px; font-size: 17px; }
+  #setup .lab { margin: 14px 0 6px; font-size: 13px; color: #8fa3bb; }
+  #setup .row { display: grid; gap: 8px; }
+  #setup .five { grid-template-columns: repeat(5, 1fr); }
+  #setup .shapes { grid-template-columns: repeat(2, 1fr); }
+  #setup button { width: 100%; padding: 0 6px; font-size: 13px; }
+  #setup button.sel { background: #2f7fd8; border-color: #4a98f0; color: #fff; }
+  #setup .custom { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  #setup input { width: 80px; height: 40px; box-sizing: border-box; font: inherit; color: #dbe6f3; background: #1a2638; border: 1px solid #3a4b63; border-radius: 8px; padding: 0 10px; }
+  #start { margin-top: 18px; height: 48px !important; font-size: 17px !important; font-weight: 700; background: #2f9f6a !important; border-color: #4cc38a !important; color: #fff !important; }
+  #menuBtn { position: fixed; left: 14px; top: 14px; width: 44px; height: 44px; padding: 0; font-size: 20px; display: none; background: rgba(15, 22, 32, 0.8); }
+  body.run #menuBtn { display: inline-flex; }
+  #menu { position: fixed; left: 14px; top: 66px; width: 270px; padding: 16px; border-radius: 14px; display: none; box-sizing: border-box;
+    background: rgba(15, 22, 32, 0.9); color: #dbe6f3; font-size: 14px; }
+  body.run.menu #menu { display: block; }
+  #menu .item { margin-bottom: 14px; }
+  #menu .item:last-child { margin-bottom: 0; }
+  #menu .head { display: flex; justify-content: space-between; margin-bottom: 6px; color: #8fa3bb; font-size: 13px; }
+  #menu .head b { color: #fff; font-variant-numeric: tabular-nums; }
+  #menu input[type=range] { width: 100%; accent-color: #4a98f0; }
+  @media (max-width: 640px) { #setup { left: 50%; top: auto; bottom: 12px; transform: translateX(-50%); width: calc(100% - 24px); max-height: 56vh; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="setup">
+  <h2>Water Timer</h2>
+  <div class="lab">時間 / Minutes</div>
+  <div class="row five" id="mins"></div>
+  <div class="custom"><input id="min" type="number" min="1" max="600" step="1" value="25"><span>分 / min</span></div>
+  <div class="lab">テンポ / BPM（水滴が落ちる速さ・音）</div>
+  <div class="row five" id="bpms"></div>
+  <div class="custom"><input id="bpm" type="number" min="0" max="240" step="1" value="60"><span>BPM（0 = Off）</span></div>
+  <div class="lab">見た目 / Style</div>
+  <div class="row shapes" id="shapes"></div>
+  <button id="start">▶ Start</button>
+</div>
+<button id="menuBtn" aria-label="Menu">☰</button>
+<div id="menu">
+  <div class="item"><div class="head"><span>テンポ / BPM</span><b id="bpmVal">60</b></div><input type="range" id="bpmSl" min="0" max="240" step="1" value="60"></div>
+  <div class="item"><div class="head"><span>音量 / Volume</span><b id="volVal">70</b></div><input type="range" id="volSl" min="0" max="100" step="1" value="70"></div>
+</div>
+<div id="bar">
+  <button id="go">❚❚ Pause</button>
+  <button id="reset">↻ Reset</button>
+  <button id="snd">🔊 Sound ON</button>
+</div>
+<script>
+(() => {
+  'use strict';
+  // ------------------------------------------------------------------
+  // 水がたまるタイマー（OBS のブラウザソース用）。設定は URL の ? 以降でも渡せる:
+  //   min=25 / sec=30 / bpm=60 (0 = なし) / shape=wine / color=4aa8ff / label=文字
+  //   text=0 (時間の表示を消す) / sound=0 (音を消す) / ui=0 (操作バーと背景を消す = OBS用)
+  //   start=1 (設定画面を飛ばして始める)
+  // 時間が 0 になっても止まらず、-00:01, -00:02 …と進み、グラスからあふれた水が水槽にたまり、
+  // やがて浮力でグラスが浮いて倒れる。
+  // ------------------------------------------------------------------
+    
+  const circ = (c, r) => (t) => { const d = (t - c) / r; return d * d >= 1 ? 0.004 : Math.max(0.004, r * Math.sqrt(1 - d * d)); };  
+  // 形の定義: hw(t) = 高さ t (0=底, 1=上端) での半分の幅 / from: 水がたまり始める高さ  
+  // handle: 取っ手 / cork: 栓 / foot: 脚つき・台つき（物理では広い底になる） / tint: 液体の色  
+  const SHAPES = {  
+    tumbler:  { name: 'Tumbler / タンブラー', hw: (t) => 0.24 + 0.05 * t, tint: [74, 168, 255] },  
+    wine:     { name: 'Wine glass / ワイングラス', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.3 * Math.sqrt(Math.max(0, 1 - Math.pow(1 - (t - 0.42) / 0.34, 2))) * (t > 0.76 ? 1 - 0.1 * Math.pow((t - 0.76) / 0.24, 2) : 1) + 0.012, foot: true, tint: [150, 30, 60] },  
+    martini:  { name: 'Martini / カクテル', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.012 + 0.34 * (t - 0.42) / 0.58, foot: true, tint: [190, 230, 120] },  
+    beaker:   { name: 'Beaker / ビーカー', hw: () => 0.2, ticks: true, tint: [90, 220, 190] },  
+    flask:    { name: 'Flask / フラスコ', hw: (t) => t < 0.55 ? 0.3 - (0.3 - 0.075) * Math.pow(t / 0.55, 1.6) : 0.075, tint: [255, 150, 60], ticks: true },  
+    potion:   { name: 'Potion / ポーション', hw: (t) => t < 0.46 ? circ(0.28, 0.28)(t) : 0.085 + (circ(0.28, 0.28)(0.46) - 0.085) * Math.exp(-(t - 0.46) / 0.05), cork: true, tint: [170, 80, 240] },  
+    teacup:   { name: 'Teacup / ティーカップ', hw: (t) => 0.36 * Math.pow(Math.sin(Math.min(1, (t + 0.06) / 1.06) * Math.PI / 2), 0.55), handle: true, tint: [200, 120, 50] },  
+    mug:      { name: 'Mug / マグカップ', hw: () => 0.26, handle: true, tint: [90, 55, 30] },  
+    fishbowl: { name: 'Fishbowl / 金魚鉢', hw: (t) => t > 0.86 ? 0.2 : (circ(0.45, 0.45)(t) > 0.2 || t < 0.5 ? circ(0.45, 0.45)(t) : Math.max(0.2, circ(0.45, 0.45)(t))), tint: [90, 190, 255], fish: true },  
+    tube:     { name: 'Test tube / 試験管', hw: (t) => t < 0.1 ? circ(0.1, 0.1)(t) * 0.8 : 0.08, tint: [120, 255, 140], ticks: true, foot: true },  
+    vase:     { name: 'Vase / 花瓶', hw: (t) => t < 0.75 ? 0.08 + 0.2 * Math.sin(Math.PI * t / 0.75) : 0.08 + 0.02 * (t - 0.75) / 0.25, tint: [110, 200, 230], flower: true },  
+  };  
+    
+  // ---- 多角形の計算 ----  
+  function polyArea(p) {   // 面積と重心（頂点は閉じた順番）  
+    let a = 0, cx = 0, cy = 0;  
+    for (let i = 0, n = p.length; i < n; i++) {  
+      const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % n], c = x0 * y1 - x1 * y0;  
+      a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;  
+    }  
+    if (Math.abs(a) < 1e-12) return { area: 0, cx: 0, cy: 0 };  
+    return { area: Math.abs(a) / 2, cx: cx / (3 * a), cy: cy / (3 * a) };  
+  }  
+  function clipBelow(p, h) {   // y <= h の部分だけ残す  
+    const out = [];  
+    for (let i = 0, n = p.length; i < n; i++) {  
+      const A = p[i], B = p[(i + 1) % n], ia = A[1] <= h, ib = B[1] <= h;  
+      if (ia) out.push(A);  
+      if (ia !== ib) { const t = (h - A[1]) / (B[1] - A[1]); out.push([A[0] + (B[0] - A[0]) * t, h]); }  
+    }  
+    return out;  
+  }  
+  function chordAt(p, h) {   // 高さ h の水平線が多角形と交わる左右の x（水面の幅）  
+    let lo = Infinity, hi = -Infinity;  
+    for (let i = 0, n = p.length; i < n; i++) {  
+      const A = p[i], B = p[(i + 1) % n];  
+      if ((A[1] - h) * (B[1] - h) <= 0 && A[1] !== B[1]) { const x = A[0] + (B[0] - A[0]) * (h - A[1]) / (B[1] - A[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); }  
+    }  
+    return lo <= hi ? [lo, hi] : null;  
+  }  
+  const areaBelow = (p, h) => { const c = clipBelow(p, h); return c.length < 3 ? { area: 0, cx: 0, cy: 0 } : polyArea(c); };  
+    
+  const G = 3.2;          // 重力（容器の高さ / 秒^2）  
+  const BUOY = 1.4;       // 浮力のつよさ（演出用に水より少し重い液体として計算）  
+  const KN = 5200, CN = 40, KT = 90, MU = 0.7;   // 床との接触（ばね・減衰・摩擦）。重さに比例させて軽い形でも安定させる  
+    
+  function makeBody(shape, tankW, tankH) {  
+    const hw = shape.hw, from = shape.from || 0;  
+    const baseHalf = shape.foot ? 0.2 : Math.max(0.08, Math.min(hw(0.03), 0.3));   // 置いたときの底の幅  
+    const hwP = (t) => t < 0.012 ? Math.max(hw(t), baseHalf) : hw(t);  
+    const S = 48, sil = [], inner = [];  
+    for (let k = 0; k <= S; k++) { const t = k / S; sil.push([-hwP(t), t]); }  
+    for (let k = S; k >= 0; k--) { const t = k / S; sil.push([hwP(t), t]); }  
+    for (let k = 0; k <= S; k++) { const t = from + (1 - from) * k / S; inner.push([-hw(t), t]); }  
+    for (let k = S; k >= 0; k--) { const t = from + (1 - from) * k / S; inner.push([hw(t), t]); }  
+    const silInfo = polyArea(sil);  
+    // 内側の水の量（面積）を高さ t から求める表  
+    const NT = 240, cum = new Float64Array(NT + 1);  
+    for (let i = 1; i <= NT; i++) { const t0 = from + (1 - from) * (i - 1) / NT, t1 = from + (1 - from) * i / NT; cum[i] = cum[i - 1] + (hw(t0) + hw(t1)) * (t1 - t0); }  
+    const capacity = cum[NT];  
+    const areaAt = (t) => { const u = Math.max(0, Math.min(1, (t - from) / (1 - from))) * NT, i = Math.min(NT - 1, Math.floor(u)); return cum[i] + (cum[i + 1] - cum[i]) * (u - i); };  
+    const mShell = 0.03 * silInfo.area + 0.02;  
+    const cShell = silInfo.cy * 0.5;  
+    
+    const b = {  
+      shape, sil, inner, capacity, areaAt, baseHalf, silArea: silInfo.area, mShell,  
+      tankW, tankH,  
+      X: 0, Y: 0, th: 0, vx: 0, vy: 0, w: 0, clock: 0,  
+      V: 0, Vp: 0, level: 0, spill: 0, poolD: 0, sub: 0, chord: null,  
+      T(u, w) { const c = Math.cos(b.th), s = Math.sin(b.th); return [b.X + u * c - w * s, b.Y + u * s + w * c]; },  
+      reset() { b.X = b.Y = b.th = b.vx = b.vy = b.w = 0; b.V = b.Vp = b.level = b.spill = b.poolD = b.sub = b.clock = 0; },  
+      // 水位から水の量（直立しているとき）  
+      volumeAtLevel: areaAt,  
+      // 1 ステップ進める。inflow: 容器に加わる水（面積 / 秒）  
+      step(dt, inflow) {  
+        const n = Math.max(1, Math.ceil(dt / (1 / 150))), h = dt / n;  
+        let spilled = 0;  
+        for (let i = 0; i < n; i++) spilled += b.sub1(h, inflow);  
+        b.spill += (spilled / dt - b.spill) * Math.min(1, dt * 8);  
+      },  
+      sub1(dt, inflow) {  
+        b.V += inflow * dt;  
+        const T = (p) => b.T(p[0], p[1]);  
+        const Iw = inner.map(T), Sw = sil.map(T);  
+        // --- 水面の高さ。縁より上は床（水槽）へこぼれる ---  
+        const rimL = b.T(-hw(1), 1), rimR = b.T(hw(1), 1), hcap = Math.min(rimL[1], rimR[1]);  
+        let ymin = 1e9; for (const p of Iw) ymin = Math.min(ymin, p[1]);  
+        const capA = areaBelow(Iw, hcap).area;  
+        let spilled = 0;  
+        if (b.V > capA) { spilled = b.V - capA; b.V = capA; b.Vp += spilled; b.level = hcap; }  
+        else { let lo = ymin, hi = hcap; for (let k = 0; k < 22; k++) { const m = (lo + hi) / 2; if (areaBelow(Iw, m).area < b.V) lo = m; else hi = m; } b.level = (lo + hi) / 2; }  
+        b.chord = b.V > 1e-6 ? chordAt(Iw, b.level) : null;  
+        const wat = b.V > 1e-6 ? areaBelow(Iw, b.level) : { area: 0, cx: 0, cy: 0 };  
+        b.Vp = Math.min(b.Vp, b.tankW * b.tankH);  
+        b.poolD = Math.min(b.tankH, b.Vp / b.tankW);  
+        // --- 重さと重心 ---  
+        const sc = b.T(0, cShell), mW = Math.max(0, b.V), m = mShell + mW;  
+        const Cx = (sc[0] * mShell + wat.cx * mW) / m, Cy = (sc[1] * mShell + wat.cy * mW) / m;  
+        let Fx = 0, Fy = -m * G, tq = 0;  
+        const add = (px, py, fx, fy) => { Fx += fx; Fy += fy; tq += (px - Cx) * fy - (py - Cy) * fx; };  
+        const vAt = (px, py) => [b.vx - b.w * (py - Cy), b.vy + b.w * (px - Cx)];  
+        // --- 浮力（水槽の水面より下にある輪郭の面積） ---  
+        const sub = b.poolD > 0 ? areaBelow(Sw, b.poolD) : { area: 0, cx: 0, cy: 0 };  
+        b.sub = sub.area;  
+        if (sub.area > 1e-6) add(sub.cx, sub.cy, 0, BUOY * G * sub.area);  
+        const frac = sub.area / silInfo.area;  
+        // --- 床と水槽の壁との接触 ---  
+        const kn = KN * m, cn = CN * m, kt = KT * m;  
+        for (const p of Sw) {  
+          const v = vAt(p[0], p[1]);  
+          if (p[1] < 0) {  
+            const fn = Math.max(0, kn * (-p[1]) - cn * v[1]);  
+            const ft = Math.max(-MU * fn, Math.min(MU * fn, -kt * v[0]));  
+            add(p[0], p[1], ft, fn);  
+          }  
+          const lim = (b.wallW || b.tankW) / 2;   // 横に倒れても壁に当たらないよう、壁は画面の外に置く  
+          if (p[0] < -lim) add(p[0], p[1], Math.max(0, kn * (-lim - p[0]) + cn * v[0]), 0);  
+          else if (p[0] > lim) add(p[0], p[1], -Math.max(0, kn * (p[0] - lim) + cn * v[0]), 0);  
+        }  
+        // --- 水面の波による揺さぶり（浮いたあとにゆらゆら傾いて、やがて倒れる） ---  
+        b.clock += dt;  
+        tq += 0.35 * frac * m * (Math.sin(1.1 * b.clock) + 0.6 * Math.sin(2.3 * b.clock + 1));  
+        // --- 水の抵抗 ---  
+        const dl = 0.06 + 2.5 * frac, da = 0.15 + 3.0 * frac;  
+        // 水の中では周りの水もいっしょに動くので、見かけの重さ（付加質量）を足す  
+        const mE = m + 0.9 * sub.area, IE = mE * 0.09;  
+        b.vx += (Fx / mE - dl * b.vx) * dt; b.vy += (Fy / mE - dl * b.vy) * dt; b.w += (tq / IE - da * b.w) * dt;  
+        b.vx = Math.max(-6, Math.min(6, b.vx)); b.vy = Math.max(-6, Math.min(6, b.vy)); b.w = Math.max(-12, Math.min(12, b.w));  
+        b.X += b.vx * dt; b.Y += b.vy * dt; b.th += b.w * dt;  
+        if (!isFinite(b.X + b.Y + b.th) || Math.abs(b.Y) > 6) { b.resets = (b.resets || 0) + 1; const keep = b.Vp; b.reset(); b.Vp = keep; }  
+        return spilled;  
+      },  
+    };  
+    return b;  
+  }  
+  
+
+  const Q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('c'), ctx = canvas.getContext('2d');
+
+  // ---- 設定 ----
+  const OVER_INFLOW = 0.07;   // 時間を過ぎたあと容器に注がれ続ける水の量（面積 / 秒）
+  const dripEvery = Math.max(0.6, parseFloat(Q.get('drip') || '2.5'));
+  const showText = Q.get('text') !== '0';
+  const label = Q.get('label') || '';
+  const customColor = /^[0-9a-f]{6}$/i.test(Q.get('color') || '') ? Q.get('color') : null;
+  const ui = Q.get('ui') !== '0';
+  let totalSec = Math.max(1, (parseFloat(Q.get('min') || '25') || 0) * 60 + (parseFloat(Q.get('sec') || '0') || 0));
+  let bpm = Math.max(0, Math.min(240, parseFloat(Q.get('bpm') || (ui ? '60' : '0')) || 0));
+  let curKey = SHAPES[Q.get('shape')] ? Q.get('shape') : 'tumbler';
+  let shape = SHAPES[curKey];
+  let soundOn = Q.get('sound') !== '0';
+  // 操作バーつきで開いたときは、まず時間・テンポ・見た目を決める設定画面を出す（OBS用の ui=0 では出さない）
+  let setupMode = ui && Q.get('start') !== '1' && !Q.has('at');
+  const syncClasses = () => { document.body.classList.toggle('ui', ui); document.body.classList.toggle('setup', setupMode); document.body.classList.toggle('run', ui && !setupMode); };
+  syncClasses();
+  const liquidRGB = () => customColor ? [0, 2, 4].map((i) => parseInt(customColor.substr(i, 2), 16)) : shape.tint;
+
+  // ---- 状態 ----
+  let elapsed = 0, running = false, chimed = false, lastT = performance.now();
+  let drop = null, parts = [], nextLand = 0, spinT = 0;
+  let ripples = [];   // 着水でできる波紋（水面の楕円の上に広がる）
+  let body = makeBody(shape, 1.5, 1.08);
+
+  // ---- 画面 ----
+  let W = 0, H = 0, dpr = 1;
+  function resize() { dpr = Math.min(2, devicePixelRatio || 1); W = canvas.width = Math.round(innerWidth * dpr); H = canvas.height = Math.round(innerHeight * dpr); }
+  addEventListener('resize', resize); resize();
+  function layout() {
+    const barRoom = ui && !setupMode ? 70 * dpr : 0, textRoom = showText ? 0.16 * H : 0.04 * H;
+    // 浮いて傾いたグラスが画面の上にはみ出さないよう、少し小さめに描く
+    // 横に倒れるのに必要な幅（グラスの高さの約2.4倍）が画面にない場合は、グラスを小さくする
+    const hc = Math.min((H - barRoom - textRoom) * 0.6, W / 2.4);
+    // 設定画面のあいだは、左の設定パネルをよけて右に寄せる
+    const shift = setupMode && W > 760 * dpr ? 170 * dpr : 0, availW = W - 2 * shift;
+    return { hc, cx: W / 2 + shift, yB: H - barRoom - textRoom - 0.02 * H, tankW: availW / hc, tankH: 1.15 };
+  }
+  const levelT = (p) => { const f = shape.from || 0; return f + (1 - f) * (0.015 + 0.955 * p); };
+  const progress = () => setupMode ? 0.5 : Math.min(1, elapsed / totalSec);
+  const isOver = () => !setupMode && elapsed >= totalSec;
+
+  // ---- 音 ----
+  let actx = null, volume = 0.7;
+  function ensureAudio() {
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state !== 'running') actx.resume(); } catch (e) { actx = null; }
+  }
+  addEventListener('pointerdown', () => { if (soundOn) ensureAudio(); }, { capture: true });
+  // 着水の音: 当たったところで変わる（グラスの中の水 / 水槽の水 / グラスの壁 / テーブル）
+  const audible = () => soundOn && actx && actx.state === 'running';
+  function tone(f0, f1, dur, amp, delay = 0, type = 'sine') {
+    const t = actx.currentTime + delay, o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, t); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + Math.min(dur, 0.08));
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, amp * volume), t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function landSound(kind) {
+    if (!audible()) return;
+    const r = Math.random();
+    if (kind === 'glassWater') { const f = 560 + 300 * r; tone(f, f * 2.3, 0.18, 0.5); }                       // 小さな水面: 軽い「ポチャン」
+    else if (kind === 'pool') { const f = 250 + 90 * r; tone(f, f * 1.9, 0.34, 0.6); tone(f * 1.6, f * 3, 0.16, 0.25, 0.07); }   // 深い水: 低い「ボチャッ」＋泡
+    else if (kind === 'glass') { const f = 2100 + 500 * r; tone(f, f, 0.45, 0.35); tone(f * 2.76, f * 2.76, 0.22, 0.14); tone(f * 4.1, f * 4.1, 0.1, 0.06); }   // ガラス: 高い「チン」
+    else { tone(210, 95, 0.09, 0.55, 0, 'triangle'); tone(900, 700, 0.04, 0.12); }                             // 木のテーブル: 「コッ」
+  }
+  function chime() {
+    if (!soundOn || !actx || actx.state !== 'running') return;
+    [880, 1318].forEach((f, i) => { const t = actx.currentTime + i * 0.18, o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.25 * volume), t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 1.5); });
+  }
+
+  // ---- 水面の波紋 ----
+  const addRipple = (pool) => ripples.push({ age: 0, pool });
+  function stepWave(dt) { spinT += dt; for (const r of ripples) r.age += dt; ripples = ripples.filter((r) => r.age < 1.6); }
+
+  // ---- 更新 ----
+  // 水滴が落ちて当たる場所: { y: 画面の y, kind: 'glassWater' | 'pool' | 'glass' | 'table' }
+  // 当たる場所の候補（グラスの中の水面・水槽の水面・倒れたグラスの壁・テーブル）のうち、一番上のもの
+  function glassHitWorldY() {   // 画面の中心を通る縦線と、グラスの輪郭が交わる一番高い位置（世界座標）
+    let top = -Infinity; const P = body.sil.map((q) => body.T(q[0], q[1]));
+    for (let i = 0; i < P.length; i++) {
+      const A = P[i], B = P[(i + 1) % P.length];
+      if (A[0] * B[0] <= 0 && A[0] !== B[0]) top = Math.max(top, A[1] + (B[1] - A[1]) * (0 - A[0]) / (B[0] - A[0]));
+    }
+    return top;
+  }
+  function landing(L) {
+    let best = body.poolD > 0.002 ? { y: L.yB - body.poolD * L.hc, kind: 'pool' } : { y: L.yB, kind: 'table' };
+    if (Math.abs(body.th) < 0.35 && body.V > 1e-3) {
+      const y = L.yB - body.level * L.hc; if (y < best.y) best = { y, kind: 'glassWater' };
+    } else {
+      const hg = glassHitWorldY();
+      if (hg > body.poolD && hg > 0.02) { const y = L.yB - hg * L.hc; if (y < best.y) best = { y, kind: 'glass' }; }
+    }
+    return best;
+  }
+  function update(dt) {
+    const L = layout();
+    body.tankW = L.tankW; body.tankH = L.tankH; body.wallW = L.tankW + 1.2;
+    if (setupMode) { body.V = body.areaAt(levelT(0.5)); body.Vp = 0; body.step(dt, 0); }
+    else if (running) {
+      elapsed += dt;
+      if (!chimed && elapsed >= totalSec) { chimed = true; chime(); addRipple(false); }
+      if (!isOver() && Math.abs(body.th) < 0.02) body.V = body.areaAt(levelT(progress()));
+      body.step(dt, isOver() ? OVER_INFLOW : 0);
+    }
+    stepWave(dt);
+
+    // しずく: テンポ（BPM）に合わせて、着水がちょうど拍に合うように落とす
+    const beat = bpm > 0 ? 60 / bpm : dripEvery;
+    if (running && !setupMode) {
+      const y0 = -20 * dpr, G = 2600 * dpr;
+      if (!drop) {
+        const tf = Math.sqrt(2 * Math.max(10, landing(L).y - y0) / G);
+        if (nextLand === 0) nextLand = elapsed + Math.max(0.5, tf + 0.15);
+        if (elapsed >= nextLand - tf) { drop = { y: y0, vy: 0 }; nextLand += beat; if (nextLand < elapsed + tf) nextLand = elapsed + tf + beat; }
+      }
+    }
+    if (drop && running) {
+      drop.vy += 2600 * dpr * dt; drop.y += drop.vy * dt;
+      const lg = landing(L), ly = lg.y;
+      if (drop.y >= ly) {
+        if (lg.kind === 'glassWater' || lg.kind === 'pool') addRipple(lg.kind === 'pool');
+        for (let i = 0; i < 6; i++) parts.push({ x: L.cx + (Math.random() - 0.5) * 6 * dpr, y: ly, vx: (Math.random() - 0.5) * 160 * dpr, vy: -(120 + Math.random() * 220) * dpr, life: 1 });
+        if (bpm > 0) landSound(lg.kind);
+        drop = null;
+      }
+    }
+    if (running) for (const p of parts) { p.vy += 1500 * dpr * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.6; }
+    parts = parts.filter((p) => p.life > 0);
+  }
+
+  // ---- 描画 ----
+  const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const L = layout(), hc = L.hc, hw = shape.hw, c = liquidRGB(), from = shape.from || 0;
+    const ox = L.cx + body.X * hc, oy = L.yB - body.Y * hc;
+    const poolY = L.yB - body.poolD * hc;
+    const local = (fn) => { ctx.save(); ctx.translate(ox, oy); ctx.rotate(-body.th); fn(); ctx.restore(); };
+    const outline = (t0, t1, close) => {
+      const S = 80; ctx.beginPath();
+      for (let i = 0; i <= S; i++) { const t = t0 + (t1 - t0) * i / S; ctx.lineTo(-hw(t) * hc, -t * hc); }
+      for (let i = S; i >= 0; i--) { const t = t0 + (t1 - t0) * i / S; ctx.lineTo(hw(t) * hc, -t * hc); }
+      if (close) ctx.closePath();
+    };
+
+    // 影
+    if (ui) { const g = ctx.createRadialGradient(ox, L.yB + 6 * dpr, 0, ox, L.yB + 6 * dpr, hc * 0.35); g.addColorStop(0, 'rgba(0,0,0,0.45)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.save(); ctx.translate(ox, L.yB + 6 * dpr); ctx.scale(1, 0.18); ctx.translate(-ox, -(L.yB + 6 * dpr)); ctx.beginPath(); ctx.arc(ox, L.yB + 6 * dpr, hc * 0.35, 0, 7); ctx.fill(); ctx.restore(); }
+
+    // テーブル（木の板）。グラスはこの上に置かれていて、水が満ちると沈む
+    { const bw = Math.min(2.2 * hc, W * 0.98), bx = L.cx - bw / 2, bh = 0.07 * hc;
+      const g = ctx.createLinearGradient(0, L.yB, 0, L.yB + bh); g.addColorStop(0, '#a8703f'); g.addColorStop(0.15, '#8a5530'); g.addColorStop(1, '#4a2a14');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(bx, L.yB, bw, bh, 5 * dpr); ctx.fill();
+      ctx.fillStyle = 'rgba(255,215,170,0.35)'; ctx.fillRect(bx + 4 * dpr, L.yB, bw - 8 * dpr, 2 * dpr); }
+
+    // 取っ手（容器の後ろ）
+    if (shape.handle) local(() => { const r = hc * 0.17; ctx.strokeStyle = 'rgba(225,238,255,0.7)'; ctx.lineWidth = 7 * dpr; ctx.beginPath(); ctx.arc(hw(0.5) * hc + r * 0.55, -0.55 * hc, r, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke(); });
+
+    // 容器の薄い色
+    local(() => { outline(0, 1, true); ctx.fillStyle = 'rgba(200,230,255,0.07)'; ctx.fill(); });
+
+    // 容器の中の水: 容器の形で切り抜き、水面は容器のふちと同じ向きの楕円（地面に水平）
+    const spl = Math.min(1, body.spill / 0.07);
+    if (body.V > 1e-3 && body.chord) {
+      const sx0 = L.cx + body.chord[0] * hc, sx1 = L.cx + body.chord[1] * hc, scx = (sx0 + sx1) / 2, srx = Math.max(2, (sx1 - sx0) / 2);
+      const yS = L.yB - body.level * hc - spl * 0.006 * hc, ry = Math.max(2.5 * dpr, srx * 0.1) + spl * 0.01 * hc;
+      ctx.save(); ctx.translate(ox, oy); ctx.rotate(-body.th); outline(from, 1, true); ctx.clip(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      // 水の体（前側の水面の弧から下）
+      // （傾いたグラスでは水が水面の幅よりも広がるので、横は切り抜きに任せて広く塗る）
+      ctx.beginPath(); ctx.rect(ox - 2.5 * hc, yS, 5 * hc, 3 * hc);
+      const g = ctx.createLinearGradient(0, yS, 0, yS + 0.6 * hc); g.addColorStop(0, rgba(c, 0.8)); g.addColorStop(1, rgba(c.map((x) => x * 0.55), 0.94));
+      ctx.fillStyle = g; ctx.fill();
+      // 壁ぎわの水は少し明るく（ガラスに沿って盛り上がる）
+      ctx.strokeStyle = rgba(c.map((x) => Math.min(255, x + 70)), 0.35); ctx.lineWidth = 5 * dpr; ctx.beginPath(); ctx.ellipse(scx, yS, srx - 2 * dpr, ry, 0, 0.15, Math.PI - 0.15); ctx.stroke();
+      // 水面（楕円）
+      ctx.beginPath(); ctx.ellipse(scx, yS, srx, ry, 0, 0, Math.PI * 2);
+      const sg = ctx.createLinearGradient(0, yS - ry, 0, yS + ry); sg.addColorStop(0, rgba(c.map((x) => Math.min(255, x + 90)), 0.75)); sg.addColorStop(1, rgba(c.map((x) => Math.min(255, x + 30)), 0.6));
+      ctx.fillStyle = sg; ctx.fill(); ctx.strokeStyle = 'rgba(235,248,255,0.9)'; ctx.lineWidth = 1.8 * dpr; ctx.stroke();
+      // 波紋
+      for (const r of ripples) { if (r.pool) continue; const k = Math.min(1, 0.1 + r.age * 1.0); ctx.beginPath(); ctx.ellipse(scx, yS, srx * k, ry * k, 0, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255,255,255,${0.8 * (1 - r.age / 1.6)})`; ctx.lineWidth = 1.4 * dpr; ctx.stroke(); }
+      ctx.restore();
+    }
+
+    // 目盛り・輪郭・ハイライトなど
+    local(() => {
+      if (shape.ticks) { ctx.strokeStyle = 'rgba(235,245,255,0.6)'; ctx.lineWidth = 1.5 * dpr; for (let k = 1; k <= 9; k++) { const t = k / 10; ctx.beginPath(); ctx.moveTo(hw(t) * hc, -t * hc); ctx.lineTo(hw(t) * hc - (k % 5 ? 10 : 18) * dpr, -t * hc); ctx.stroke(); } }
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      outline(0, 1, false); ctx.strokeStyle = 'rgba(228,242,255,0.8)'; ctx.lineWidth = 3 * dpr; ctx.stroke();
+      ctx.beginPath(); const hl = from > 0 ? from + 0.12 : 0.2;
+      for (let t = hl; t <= 0.85; t += 0.02) { const x = -hw(t) * hc + 12 * dpr, y = -t * hc; if (t === hl) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 4 * dpr; ctx.stroke();
+      const rim = hw(1) * hc; ctx.beginPath(); ctx.ellipse(0, -hc, rim, Math.max(4 * dpr, rim * 0.1), 0, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(235,245,255,0.75)'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+      if (shape.foot) { ctx.beginPath(); ctx.ellipse(0, -4 * dpr, hc * 0.2, 7 * dpr, 0, 0, Math.PI * 2); ctx.fillStyle = 'rgba(200,225,250,0.35)'; ctx.fill(); ctx.stroke(); }
+      if (shape.cork) { const cw = hw(1) * hc * 1.15; ctx.fillStyle = '#9a6a3a'; ctx.fillRect(-cw, -hc - 22 * dpr, cw * 2, 28 * dpr); ctx.fillStyle = 'rgba(255,220,170,0.25)'; ctx.fillRect(-cw, -hc - 22 * dpr, cw * 2, 5 * dpr); }
+      if (shape.flower) { ctx.strokeStyle = '#4f9a3c'; ctx.lineWidth = 4 * dpr; ctx.beginPath(); ctx.moveTo(0, -hc + 6 * dpr); ctx.quadraticCurveTo(20 * dpr, -hc * 1.15, 6 * dpr, -hc * 1.28); ctx.stroke(); ctx.fillStyle = '#ff8fb0'; for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; ctx.beginPath(); ctx.arc(6 * dpr + Math.cos(a) * 12 * dpr, -hc * 1.28 + Math.sin(a) * 12 * dpr, 9 * dpr, 0, 7); ctx.fill(); } ctx.fillStyle = '#ffd24a'; ctx.beginPath(); ctx.arc(6 * dpr, -hc * 1.28, 8 * dpr, 0, 7); ctx.fill(); }
+      if (shape.fish) { const lv = body.level - body.Y, fx = Math.sin(spinT * 0.6) * hc * 0.15, fy = -hc * 0.3 + Math.sin(spinT * 1.1) * 8 * dpr, d = Math.cos(spinT * 0.6) > 0 ? 1 : -1; if (Math.abs(body.th) < 0.2 && -fy / hc < lv - 0.02) { ctx.fillStyle = '#ff8a3c'; ctx.beginPath(); ctx.ellipse(fx, fy, 16 * dpr, 9 * dpr, 0, 0, 7); ctx.fill(); ctx.beginPath(); ctx.moveTo(fx - d * 14 * dpr, fy); ctx.lineTo(fx - d * 28 * dpr, fy - 9 * dpr); ctx.lineTo(fx - d * 28 * dpr, fy + 9 * dpr); ctx.fill(); } }
+    });
+
+    // あふれる水: ふちから、グラスの外側の壁を伝って流れ落ちる（傾いているときは低いほうだけ）
+    if (!setupMode && body.spill > 0.003) {
+      const lips = [body.T(-hw(1), 1), body.T(hw(1), 1)], low = Math.min(lips[0][1], lips[1][1]);
+      local(() => {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        [-1, 1].forEach((sd, i) => {
+          if (lips[i][1] > low + 0.04) return;
+          const wf = (3 + 6 * spl) * dpr;
+          ctx.beginPath();
+          for (let k = 0; k <= 40; k++) { const t = 1 - k / 40; ctx.lineTo(sd * (hw(t) * hc + wf * 0.55), -t * hc); }
+          ctx.strokeStyle = rgba(c, 0.6); ctx.lineWidth = wf; ctx.stroke();
+          ctx.setLineDash([9 * dpr, 13 * dpr]); ctx.lineDashOffset = -spinT * 80 * dpr; ctx.strokeStyle = 'rgba(240,250,255,0.75)'; ctx.lineWidth = 1.3 * dpr; ctx.stroke(); ctx.setLineDash([]);
+        });
+      });
+    }
+
+    // 満ちてくる水: 画面いっぱいに広がり、水面はゆるやかに揺れる（ふちの向きに合わせた楕円の波紋つき）
+    if (body.poolD > 0.002) {
+      const amp = hc * 0.006, sf = (x) => poolY + Math.sin(x / (0.11 * hc) + spinT * 2.2) * amp + Math.sin(x / (0.26 * hc) - spinT * 1.4) * amp;
+      ctx.beginPath(); ctx.moveTo(0, H);
+      for (let x = 0; x <= W + 8; x += 8) ctx.lineTo(x, sf(x));
+      ctx.lineTo(W, H); ctx.closePath();
+      const g = ctx.createLinearGradient(0, poolY, 0, L.yB + 0.5 * hc); g.addColorStop(0, rgba(c, 0.5)); g.addColorStop(1, rgba(c.map((x) => x * 0.6), 0.75));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.beginPath(); for (let x = 0; x <= W + 8; x += 8) { if (x) ctx.lineTo(x, sf(x)); else ctx.moveTo(x, sf(x)); }
+      ctx.strokeStyle = 'rgba(235,248,255,0.85)'; ctx.lineWidth = 2 * dpr; ctx.stroke();
+      for (const r of ripples) { if (!r.pool) continue; const k = 0.05 + r.age * 0.9; ctx.beginPath(); ctx.ellipse(L.cx, poolY + 2 * dpr, hc * k * 0.5, hc * k * 0.06, 0, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255,255,255,${0.7 * (1 - r.age / 1.6)})`; ctx.lineWidth = 1.4 * dpr; ctx.stroke(); }
+    }
+
+    // 落ちてくるしずく
+    if (drop) { const r = 7 * dpr, str = 1 + Math.min(0.9, drop.vy / (2200 * dpr)); ctx.beginPath(); ctx.moveTo(L.cx, drop.y - r * 2 * str); ctx.quadraticCurveTo(L.cx + r * 1.1, drop.y - r * 0.2, L.cx, drop.y + r); ctx.quadraticCurveTo(L.cx - r * 1.1, drop.y - r * 0.2, L.cx, drop.y - r * 2 * str); ctx.fillStyle = rgba(c.map((x) => Math.min(255, x + 40)), 0.9); ctx.fill(); ctx.strokeStyle = 'rgba(235,248,255,0.8)'; ctx.lineWidth = 1.5 * dpr; ctx.stroke(); }
+    for (const q of parts) { ctx.beginPath(); ctx.arc(q.x, q.y, 3 * dpr * q.life + 0.5, 0, 7); ctx.fillStyle = rgba(c, 0.85 * q.life); ctx.fill(); }
+
+    // 文字: 0 を過ぎたらマイナスで進む
+    if (showText) {
+      const over = isOver(), total = setupMode ? Math.round((parseFloat($('min').value) || 0) * 60) : totalSec;
+      const shown = over ? Math.floor(elapsed - totalSec) : Math.max(0, Math.ceil(total - elapsed));
+      const hh = Math.floor(shown / 3600), mm = Math.floor(shown % 3600 / 60), ss = shown % 60;
+      const txt = (over && shown > 0 ? '-' : '') + (hh ? hh + ':' : '') + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+      const fs = Math.min(W * 0.16, H * 0.11), y = L.yB + 0.02 * H + fs * 0.95;
+      ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.lineWidth = fs * 0.12; ctx.strokeStyle = 'rgba(8,14,24,0.85)'; ctx.lineJoin = 'round'; ctx.strokeText(txt, L.cx, y);
+      ctx.fillStyle = over ? '#ff9a8a' : '#ffffff'; ctx.fillText(txt, L.cx, y);
+      if (label) { const f2 = fs * 0.32; ctx.font = `600 ${f2}px "Yu Gothic UI", Meiryo, sans-serif`; ctx.lineWidth = f2 * 0.2; ctx.strokeText(label, L.cx, y + f2 * 1.25); ctx.fillStyle = '#cfe3f7'; ctx.fillText(label, L.cx, y + f2 * 1.25); }
+    }
+  }
+
+  // ---- 操作 ----
+  const setGoLabel = () => { $('go').textContent = running ? '❚❚ Pause' : '▶ Resume'; };
+  const setSndLabel = () => { $('snd').textContent = soundOn ? '🔊 Sound ON' : '🔇 Sound OFF'; };
+  function toggleRun() { if (setupMode) return; running = !running; setGoLabel(); }
+  function toggleSound() { soundOn = !soundOn; if (soundOn) ensureAudio(); setSndLabel(); }
+  function clearRun() { elapsed = 0; chimed = false; drop = null; parts = []; nextLand = 0; ripples = []; body = makeBody(shape, 1.5, 1.08); }
+  // リセット: 設定画面に戻る（直前の時間・テンポ・見た目が選ばれたまま）
+  function toSetup() {
+    if (setupMode) return;
+    running = false; setupMode = true; clearRun(); document.body.classList.remove('menu'); syncClasses(); refreshSetup();
+  }
+  function startTimer() {
+    const m = parseFloat($('min').value);
+    if (!(m > 0)) { $('min').focus(); return; }
+    totalSec = Math.min(600, m) * 60; bpm = Math.max(0, Math.min(240, parseFloat($('bpm').value) || 0));
+    clearRun(); setupMode = false; running = true; syncClasses(); setGoLabel(); setSndLabel();
+    if (soundOn) ensureAudio();
+  }
+  // ハンバーガーメニュー: 作動中にテンポと音量をスライダーで変える
+  const syncMenu = () => { $('bpmSl').value = bpm; $('bpmVal').textContent = bpm > 0 ? bpm : 'Off'; $('volSl').value = Math.round(volume * 100); $('volVal').textContent = Math.round(volume * 100); };
+  $('menuBtn').onclick = () => { document.body.classList.toggle('menu'); syncMenu(); };
+  $('bpmSl').oninput = () => { bpm = +$('bpmSl').value; nextLand = 0; syncMenu(); };   // 次のしずくから新しいテンポで落とす
+  $('volSl').oninput = () => { volume = +$('volSl').value / 100; syncMenu(); };
+  $('go').onclick = toggleRun; $('reset').onclick = toSetup; $('snd').onclick = toggleSound; $('start').onclick = startTimer;
+  addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') { if (e.code === 'Enter' && setupMode) startTimer(); return; }
+    if (e.code === 'Space') { e.preventDefault(); if (setupMode) startTimer(); else toggleRun(); }
+    else if (e.code === 'Enter' && setupMode) startTimer();
+    else if (e.code === 'KeyM') toggleSound();
+  });
+
+  // 設定画面（時間・テンポ・見た目）
+  const markGroup = (box, pred) => { for (const b of box.children) b.classList.toggle('sel', pred(b)); };
+  const markMin = () => markGroup($('mins'), (b) => +b.dataset.m === parseFloat($('min').value));
+  const markBpm = () => markGroup($('bpms'), (b) => +b.dataset.b === (parseFloat($('bpm').value) || 0));
+  const markShape = () => markGroup($('shapes'), (b) => b.dataset.k === curKey);
+  function refreshSetup() { $('min').value = Math.round(totalSec / 60 * 100) / 100; $('bpm').value = bpm; markMin(); markBpm(); markShape(); }
+  for (const m of [5, 10, 25, 45, 60]) { const b = document.createElement('button'); b.textContent = m; b.dataset.m = m; b.onclick = () => { $('min').value = m; markMin(); }; $('mins').appendChild(b); }
+  for (const bp of [0, 60, 80, 100, 120]) { const b = document.createElement('button'); b.textContent = bp ? bp : 'Off'; b.dataset.b = bp; b.onclick = () => { $('bpm').value = bp; markBpm(); }; $('bpms').appendChild(b); }
+  for (const [k, sh] of Object.entries(SHAPES)) { const b = document.createElement('button'); b.textContent = sh.name; b.dataset.k = k; b.onclick = () => { curKey = k; shape = sh; body = makeBody(shape, 1.5, 1.08); markShape(); }; $('shapes').appendChild(b); }
+  $('min').oninput = markMin; $('bpm').oninput = markBpm;
+  refreshSetup(); setSndLabel(); syncMenu();
+
+  // 確認用: ?at=600 で 600 秒経過した状態にして、settle=秒 だけ物理を進める
+  if (Q.has('at')) { elapsed = parseFloat(Q.get('at')) || 0; body.V = body.areaAt(levelT(Math.min(1, elapsed / totalSec))); }
+  if (!setupMode) running = true;
+  setGoLabel();
+  if (Q.has('settle')) { const sec = Math.max(1, parseFloat(Q.get('settle')) || 1); for (let i = 0; i < sec * 60; i++) update(1 / 60); }
+
+  function frame(now) { const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now; update(dt); draw(); requestAnimationFrame(frame); }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
