@@ -462,7 +462,8 @@
     const outline = (t0, t1, close) => {
       const S = 80; ctx.beginPath();
       for (let i = 0; i <= S; i++) { const t = t0 + (t1 - t0) * i / S; ctx.lineTo(-hw(t) * hc, -t * hc); }
-      for (let i = S; i >= 0; i--) { const t = t0 + (t1 - t0) * i / S; ctx.lineTo(hw(t) * hc, -t * hc); }
+      // 開いた輪郭は、左の壁と右の壁を別々の線にする（上端でつなぐと、ふちの楕円とは別に余計な直線が引かれる）
+      for (let i = S; i >= 0; i--) { const t = t0 + (t1 - t0) * i / S; if (i === S && !close) ctx.moveTo(hw(t) * hc, -t * hc); else ctx.lineTo(hw(t) * hc, -t * hc); }
       if (close) ctx.closePath();
     };
 
@@ -627,8 +628,18 @@
   setGoLabel();
   if (Q.has('settle')) { const sec = Math.max(1, parseFloat(Q.get('settle')) || 1); for (let i = 0; i < sec * 60; i++) update(1 / 60); }
 
-  function frame(now) { const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now; update(dt); draw(); requestAnimationFrame(frame); }
+  // 画面が見えているあいだは描画つきで更新する
+  function frame(now) { const dt = Math.min(0.25, (now - lastT) / 1000); lastT = now; update(dt); draw(); requestAnimationFrame(frame); }
   requestAnimationFrame(frame);
+  // 別のタブや画面に隠れているあいだは、ブラウザが描画（rAF）を止めてしまうので、
+  // Web Worker の定期タイマーで更新だけを進める（時間・水滴・音が止まらない）
+  try {
+    const wk = new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0)},50)'], { type: 'text/javascript' })));
+    wk.onmessage = () => {
+      if (!document.hidden) return;
+      const now = performance.now(), dt = Math.min(0.5, (now - lastT) / 1000); lastT = now; update(dt);
+    };
+  } catch (e) { /* Worker が使えない環境では、見えているときだけ動く */ }
 })();
 </script>
 </body>
