@@ -78,216 +78,216 @@
   // 時間が 0 になっても止まらず、-00:01, -00:02 …と進み、グラスからあふれた水が水槽にたまり、
   // やがて浮力でグラスが浮いて倒れる。
   // ------------------------------------------------------------------
-  
-  const circ = (c, r) => (t) => { const d = (t - c) / r; return d * d >= 1 ? 0.004 : Math.max(0.004, r * Math.sqrt(1 - d * d)); };
-  // 形の定義: hw(t) = 高さ t (0=底, 1=上端) での半分の幅 / from: 水がたまり始める高さ
-  // handle: 取っ手 / cork: 栓 / foot: 脚つき・台つき（物理では広い底になる） / tint: 液体の色
-  const SHAPES = {
-    tumbler:  { name: 'Tumbler / タンブラー', hw: (t) => 0.24 + 0.05 * t, tint: [74, 168, 255], objs: [['ice', 3]] },
-    wine:     { name: 'Wine glass / ワイングラス', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.3 * Math.sqrt(Math.max(0, 1 - Math.pow(1 - (t - 0.42) / 0.34, 2))) * (t > 0.76 ? 1 - 0.1 * Math.pow((t - 0.76) / 0.24, 2) : 1) + 0.012, foot: true, tint: [150, 30, 60] },
-    martini:  { name: 'Martini / カクテル', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.012 + 0.34 * (t - 0.42) / 0.58, foot: true, tint: [190, 230, 120], objs: [['olive', 1]] },
-    beaker:   { name: 'Beaker / ビーカー', hw: () => 0.2, ticks: true, tint: [90, 220, 190] },
-    flask:    { name: 'Flask / フラスコ', hw: (t) => t < 0.55 ? 0.3 - (0.3 - 0.075) * Math.pow(t / 0.55, 1.6) : 0.075, tint: [255, 150, 60], ticks: true },
-    potion:   { name: 'Potion / ポーション', hw: (t) => t < 0.46 ? circ(0.28, 0.28)(t) : 0.085 + (circ(0.28, 0.28)(0.46) - 0.085) * Math.exp(-(t - 0.46) / 0.05), cork: true, tint: [170, 80, 240] },
-    teacup:   { name: 'Teacup / ティーカップ', hw: (t) => 0.36 * Math.pow(Math.sin(Math.min(1, (t + 0.06) / 1.06) * Math.PI / 2), 0.55), handle: true, tint: [200, 120, 50] },
-    mug:      { name: 'Mug / マグカップ', hw: () => 0.26, handle: true, tint: [90, 55, 30] },
-    fishbowl: { name: 'Fishbowl / 金魚鉢', hw: (t) => t > 0.86 ? 0.2 : (circ(0.45, 0.45)(t) > 0.2 || t < 0.5 ? circ(0.45, 0.45)(t) : Math.max(0.2, circ(0.45, 0.45)(t))), tint: [90, 190, 255], objs: [['pebble', 5]] },
-    tube:     { name: 'Test tube / 試験管', hw: (t) => t < 0.1 ? circ(0.1, 0.1)(t) * 0.8 : 0.08, tint: [120, 255, 140], ticks: true, foot: true },
-    vase:     { name: 'Vase / 花瓶', hw: (t) => t < 0.75 ? 0.08 + 0.2 * Math.sin(Math.PI * t / 0.75) : 0.08 + 0.02 * (t - 0.75) / 0.25, tint: [110, 200, 230], flower: true },
-  };
-  
-  // ---- 多角形の計算 ----
-  function polyArea(p) {   // 面積と重心（頂点は閉じた順番）
-    let a = 0, cx = 0, cy = 0;
-    for (let i = 0, n = p.length; i < n; i++) {
-      const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % n], c = x0 * y1 - x1 * y0;
-      a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;
-    }
-    if (Math.abs(a) < 1e-12) return { area: 0, cx: 0, cy: 0 };
-    return { area: Math.abs(a) / 2, cx: cx / (3 * a), cy: cy / (3 * a) };
-  }
-  function clipBelow(p, h) {   // y <= h の部分だけ残す
-    const out = [];
-    for (let i = 0, n = p.length; i < n; i++) {
-      const A = p[i], B = p[(i + 1) % n], ia = A[1] <= h, ib = B[1] <= h;
-      if (ia) out.push(A);
-      if (ia !== ib) { const t = (h - A[1]) / (B[1] - A[1]); out.push([A[0] + (B[0] - A[0]) * t, h]); }
-    }
-    return out;
-  }
-  function chordAt(p, h) {   // 高さ h の水平線が多角形と交わる左右の x（水面の幅）
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 0, n = p.length; i < n; i++) {
-      const A = p[i], B = p[(i + 1) % n];
-      if ((A[1] - h) * (B[1] - h) <= 0 && A[1] !== B[1]) { const x = A[0] + (B[0] - A[0]) * (h - A[1]) / (B[1] - A[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); }
-    }
-    return lo <= hi ? [lo, hi] : null;
-  }
-  const areaBelow = (p, h) => { const c = clipBelow(p, h); return c.length < 3 ? { area: 0, cx: 0, cy: 0 } : polyArea(c); };
-  
-  // 水以外のオブジェクト: r 半径 / rho 水に対する重さ（1 より小さいと浮く）/ e 反発
-  const OBJ = { ice: { r: 0.05, rho: 0.88, e: 0.3 }, olive: { r: 0.04, rho: 1.1, e: 0.15 }, pebble: { r: 0.03, rho: 2.4, e: 0.25 } };
-  function pointInPoly(p, x, y) {
-    let c = false;
-    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
-      if ((p[i][1] > y) !== (p[j][1] > y) && x < (p[j][0] - p[i][0]) * (y - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) c = !c;
-    }
-    return c;
-  }
-  const G = 3.2;          // 重力（容器の高さ / 秒^2）
-  const BUOY = 1.4;       // 浮力のつよさ（演出用に水より少し重い液体として計算）
-  const KN = 5200, CN = 40, KT = 90, MU = 0.7;   // 床との接触（ばね・減衰・摩擦）。重さに比例させて軽い形でも安定させる
-  
-  function makeBody(shape, tankW, tankH) {
-    const hw = shape.hw, from = shape.from || 0;
-    const baseHalf = shape.foot ? 0.2 : Math.max(0.08, Math.min(hw(0.03), 0.3));   // 置いたときの底の幅
-    const hwP = (t) => t < 0.012 ? Math.max(hw(t), baseHalf) : hw(t);
-    const S = 48, sil = [], inner = [];
-    for (let k = 0; k <= S; k++) { const t = k / S; sil.push([-hwP(t), t]); }
-    for (let k = S; k >= 0; k--) { const t = k / S; sil.push([hwP(t), t]); }
-    for (let k = 0; k <= S; k++) { const t = from + (1 - from) * k / S; inner.push([-hw(t), t]); }
-    for (let k = S; k >= 0; k--) { const t = from + (1 - from) * k / S; inner.push([hw(t), t]); }
-    const silInfo = polyArea(sil);
-    // 内側の水の量（面積）を高さ t から求める表
-    const NT = 240, cum = new Float64Array(NT + 1);
-    for (let i = 1; i <= NT; i++) { const t0 = from + (1 - from) * (i - 1) / NT, t1 = from + (1 - from) * i / NT; cum[i] = cum[i - 1] + (hw(t0) + hw(t1)) * (t1 - t0); }
-    const capacity = cum[NT];
-    const areaAt = (t) => { const u = Math.max(0, Math.min(1, (t - from) / (1 - from))) * NT, i = Math.min(NT - 1, Math.floor(u)); return cum[i] + (cum[i + 1] - cum[i]) * (u - i); };
-    const mShell = 0.03 * silInfo.area + 0.02;
-    const cShell = silInfo.cy * 0.5;
-  
-    const b = {
-      shape, sil, inner, capacity, areaAt, baseHalf, silArea: silInfo.area, mShell,
-      tankW, tankH,
-      X: 0, Y: 0, th: 0, vx: 0, vy: 0, w: 0, clock: 0,
-      V: 0, Vp: 0, level: 0, spill: 0, poolD: 0, sub: 0, chord: null, Cx: 0, Cy: 0, objects: [], events: [], wallW: 0,
-      T(u, w) { const c = Math.cos(b.th), s = Math.sin(b.th); return [b.X + u * c - w * s, b.Y + u * s + w * c]; },
-      // 落ちてきた水を加える: グラスの中へ（あふれた分は床へ）、または直接床へ
-      addWater(v, toGlass) { if (toGlass) b.V += v; else b.Vp += v; },
-      // 水以外のオブジェクトを、空のグラスの底に置く
-      initObjects() {
-        b.objects = []; let k = 0;
-        for (const [kind, n] of (shape.objs || [])) {
-          for (let i = 0; i < n; i++, k++) {
-            const d = OBJ[kind];
-            b.objects.push({ kind, r: d.r, rho: d.rho, e: d.e, x: (i - (n - 1) / 2) * d.r * 2.2, y: from + d.r * 1.2 + k * d.r * 2.4, vx: 0, vy: 0, th: i * 0.7, w: 0, last: 0 });
-          }
-        }
-      },
-      reset() { b.X = b.Y = b.th = b.vx = b.vy = b.w = 0; b.V = b.Vp = b.level = b.spill = b.poolD = b.sub = b.clock = 0; b.events = []; b.initObjects(); },
-      // 水位から水の量（直立しているとき）
-      volumeAtLevel: areaAt,
-      // 1 ステップ進める。inflow: 容器に加わる水（面積 / 秒）
-      step(dt, inflow) {
-        const n = Math.max(1, Math.ceil(dt / (1 / 150))), h = dt / n;
-        let spilled = 0;
-        for (let i = 0; i < n; i++) spilled += b.sub1(h, inflow);
-        b.spill += (spilled / dt - b.spill) * Math.min(1, dt * 8);
-      },
-      // --- 水以外のオブジェクト（氷・オリーブ・小石）: 水の浮力、グラスの壁、床、ほかのオブジェクトとの当たり判定 ---
-      stepObjects(dt, Iw) {
-        const objs = b.objects, now = (b.clock || 0), walls = [];
-        // グラスの内側の壁（上の口は開いているので、上辺は含めない）
-        const n = inner.length, S = (n - 2) / 2;
-        for (let i = 0; i < n; i++) { if (i === S) continue; const A = Iw[i], B = Iw[(i + 1) % n]; walls.push([A, B]); }
-        const hit = (o, speed, other) => { if (speed > 0.12 && now - o.last > 0.07) { o.last = now; b.events.push({ kind: o.kind, other, speed }); } };
-        for (const o of objs) {
-          // 水の中にいるか（グラスの中の水面か、床にたまった水面か）
-          let level = -1e9;
-          if (b.V > 1e-6 && pointInPoly(Iw, o.x, o.y)) level = b.level;
-          if (b.poolD > 0) level = Math.max(level, b.poolD);
-          const f = Math.max(0, Math.min(1, (level - (o.y - o.r)) / (2 * o.r)));
-          const ay = -G + G * f / o.rho, drag = 0.02 + 3.2 * f;
-          o.vx += (-drag * o.vx) * dt; o.vy += (ay - drag * o.vy) * dt; o.w += -(0.1 + 2 * f) * o.w * dt;
-          o.x += o.vx * dt; o.y += o.vy * dt; o.th += o.w * dt;
-          // 床と部屋の壁
-          if (o.y < o.r) { o.y = o.r; if (o.vy < 0) { hit(o, -o.vy, 'floor'); o.vy = -o.vy * o.e; o.vx *= 0.92; } }
-          const lim = (b.wallW || 3) / 2 - o.r;
-          if (o.x < -lim) { o.x = -lim; o.vx = Math.abs(o.vx) * o.e; } else if (o.x > lim) { o.x = lim; o.vx = -Math.abs(o.vx) * o.e; }
-          // グラスの壁（動いている壁の速さも考える）
-          for (const [A, B] of walls) {
-            const ex = B[0] - A[0], ey = B[1] - A[1], L2 = ex * ex + ey * ey || 1e-9;
-            const u = Math.max(0, Math.min(1, ((o.x - A[0]) * ex + (o.y - A[1]) * ey) / L2)), cx = A[0] + ex * u, cy = A[1] + ey * u;
-            let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
-            if (d >= o.r + 0.004) continue;
-            if (d < 1e-6) { dx = 0; dy = 1; d = 1; }
-            const nx = dx / d, ny = dy / d;
-            o.x = cx + nx * (o.r + 0.004); o.y = cy + ny * (o.r + 0.004);
-            const wx = b.vx - b.w * (cy - b.Cy), wy = b.vy + b.w * (cx - b.Cx);
-            const rel = (o.vx - wx) * nx + (o.vy - wy) * ny;
-            if (rel < 0) { o.vx -= (1 + o.e) * rel * nx; o.vy -= (1 + o.e) * rel * ny; o.w += (rel * 0.5) * (nx > 0 ? 1 : -1); hit(o, -rel, 'glass'); }
-          }
-        }
-        // オブジェクトどうし
-        for (let i = 0; i < objs.length; i++) for (let j = i + 1; j < objs.length; j++) {
-          const a = objs[i], c = objs[j]; let dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy); const R = a.r + c.r;
-          if (d >= R) continue; if (d < 1e-6) { dx = 1; dy = 0; d = 1; }
-          const nx = dx / d, ny = dy / d, push = (R - d) / 2;
-          a.x -= nx * push; a.y -= ny * push; c.x += nx * push; c.y += ny * push;
-          const rel = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
-          if (rel < 0) { const m1 = a.rho * a.r * a.r, m2 = c.rho * c.r * c.r, k = (1 + Math.min(a.e, c.e)) * rel / (m1 + m2); a.vx += k * m2 * nx; a.vy += k * m2 * ny; c.vx -= k * m1 * nx; c.vy -= k * m1 * ny; hit(a, -rel, c.kind); }
-        }
-        for (const o of objs) if (!isFinite(o.x + o.y)) { o.x = 0; o.y = 0.2; o.vx = o.vy = 0; }
-      },
-      sub1(dt, inflow) {
-        b.V += inflow * dt;
-        const T = (p) => b.T(p[0], p[1]);
-        const Iw = inner.map(T), Sw = sil.map(T);
-        // --- 水面の高さ。縁より上は床（水槽）へこぼれる ---
-        const rimL = b.T(-hw(1), 1), rimR = b.T(hw(1), 1), hcap = Math.min(rimL[1], rimR[1]);
-        let ymin = 1e9; for (const p of Iw) ymin = Math.min(ymin, p[1]);
-        const capA = areaBelow(Iw, hcap).area;
-        let spilled = 0;
-        if (b.V > capA) { spilled = b.V - capA; b.V = capA; b.Vp += spilled; b.level = hcap; }
-        else { let lo = ymin, hi = hcap; for (let k = 0; k < 22; k++) { const m = (lo + hi) / 2; if (areaBelow(Iw, m).area < b.V) lo = m; else hi = m; } b.level = (lo + hi) / 2; }
-        b.chord = b.V > 1e-6 ? chordAt(Iw, b.level) : null;
-        const wat = b.V > 1e-6 ? areaBelow(Iw, b.level) : { area: 0, cx: 0, cy: 0 };
-        b.Vp = Math.min(b.Vp, b.tankW * b.tankH);
-        b.poolD = Math.min(b.tankH, b.Vp / b.tankW);
-        // --- 重さと重心 ---
-        b.Cx = 0; b.Cy = 0;
-        const sc = b.T(0, cShell), mW = Math.max(0, b.V), m = mShell + mW;
-        const Cx = (sc[0] * mShell + wat.cx * mW) / m, Cy = (sc[1] * mShell + wat.cy * mW) / m;
-        b.Cx = Cx; b.Cy = Cy;
-        let Fx = 0, Fy = -m * G, tq = 0;
-        const add = (px, py, fx, fy) => { Fx += fx; Fy += fy; tq += (px - Cx) * fy - (py - Cy) * fx; };
-        const vAt = (px, py) => [b.vx - b.w * (py - Cy), b.vy + b.w * (px - Cx)];
-        // --- 浮力（水槽の水面より下にある輪郭の面積） ---
-        const sub = b.poolD > 0 ? areaBelow(Sw, b.poolD) : { area: 0, cx: 0, cy: 0 };
-        b.sub = sub.area;
-        if (sub.area > 1e-6) add(sub.cx, sub.cy, 0, BUOY * G * sub.area);
-        const frac = sub.area / silInfo.area;
-        // --- 床と水槽の壁との接触 ---
-        const kn = KN * m, cn = CN * m, kt = KT * m;
-        for (const p of Sw) {
-          const v = vAt(p[0], p[1]);
-          if (p[1] < 0) {
-            const fn = Math.max(0, kn * (-p[1]) - cn * v[1]);
-            const ft = Math.max(-MU * fn, Math.min(MU * fn, -kt * v[0]));
-            add(p[0], p[1], ft, fn);
-          }
-          const lim = (b.wallW || b.tankW) / 2;   // 横に倒れても壁に当たらないよう、壁は画面の外に置く
-          if (p[0] < -lim) add(p[0], p[1], Math.max(0, kn * (-lim - p[0]) + cn * v[0]), 0);
-          else if (p[0] > lim) add(p[0], p[1], -Math.max(0, kn * (p[0] - lim) + cn * v[0]), 0);
-        }
-        // --- 水面の波による揺さぶり（浮いたあとにゆらゆら傾いて、やがて倒れる） ---
-        b.clock += dt;
-        tq += 0.35 * frac * m * (Math.sin(1.1 * b.clock) + 0.6 * Math.sin(2.3 * b.clock + 1));
-        // --- 水の抵抗 ---
-        const dl = 0.06 + 2.5 * frac, da = 0.15 + 3.0 * frac;
-        // 水の中では周りの水もいっしょに動くので、見かけの重さ（付加質量）を足す
-        const mE = m + 0.9 * sub.area, IE = mE * 0.09;
-        b.vx += (Fx / mE - dl * b.vx) * dt; b.vy += (Fy / mE - dl * b.vy) * dt; b.w += (tq / IE - da * b.w) * dt;
-        b.vx = Math.max(-6, Math.min(6, b.vx)); b.vy = Math.max(-6, Math.min(6, b.vy)); b.w = Math.max(-12, Math.min(12, b.w));
-        b.X += b.vx * dt; b.Y += b.vy * dt; b.th += b.w * dt;
-        if (!isFinite(b.X + b.Y + b.th) || Math.abs(b.Y) > 6) { b.resets = (b.resets || 0) + 1; const keep = b.Vp; b.reset(); b.Vp = keep; }
-        b.stepObjects(dt, Iw);
-        return spilled;
-      },
-    };
-    b.initObjects();
-    return b;
-  }
+    
+  const circ = (c, r) => (t) => { const d = (t - c) / r; return d * d >= 1 ? 0.004 : Math.max(0.004, r * Math.sqrt(1 - d * d)); };  
+  // 形の定義: hw(t) = 高さ t (0=底, 1=上端) での半分の幅 / from: 水がたまり始める高さ  
+  // handle: 取っ手 / cork: 栓 / foot: 脚つき・台つき（物理では広い底になる） / tint: 液体の色  
+  const SHAPES = {  
+    tumbler:  { name: 'Tumbler / タンブラー', hw: (t) => 0.24 + 0.05 * t, tint: [74, 168, 255], objs: [['ice', 3]], pitch: 1.0 },  
+    wine:     { name: 'Wine glass / ワイングラス', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.3 * Math.sqrt(Math.max(0, 1 - Math.pow(1 - (t - 0.42) / 0.34, 2))) * (t > 0.76 ? 1 - 0.1 * Math.pow((t - 0.76) / 0.24, 2) : 1) + 0.012, foot: true, tint: [150, 30, 60], pitch: 0.82 },  
+    martini:  { name: 'Martini / カクテル', from: 0.42, hw: (t) => t < 0.42 ? 0.012 : 0.012 + 0.34 * (t - 0.42) / 0.58, foot: true, tint: [190, 230, 120], objs: [['olive', 1]], pitch: 1.12 },  
+    beaker:   { name: 'Beaker / ビーカー', hw: () => 0.2, ticks: true, tint: [90, 220, 190], pitch: 1.05 },  
+    flask:    { name: 'Flask / フラスコ', hw: (t) => t < 0.55 ? 0.3 - (0.3 - 0.075) * Math.pow(t / 0.55, 1.6) : 0.075, tint: [255, 150, 60], ticks: true, pitch: 1.2 },  
+    potion:   { name: 'Potion / ポーション', hw: (t) => t < 0.46 ? circ(0.28, 0.28)(t) : 0.085 + (circ(0.28, 0.28)(0.46) - 0.085) * Math.exp(-(t - 0.46) / 0.05), cork: true, tint: [170, 80, 240], pitch: 1.3 },  
+    teacup:   { name: 'Teacup / ティーカップ', hw: (t) => 0.36 * Math.pow(Math.sin(Math.min(1, (t + 0.06) / 1.06) * Math.PI / 2), 0.55), handle: true, tint: [200, 120, 50], pitch: 0.92 },  
+    mug:      { name: 'Mug / マグカップ', hw: () => 0.26, handle: true, tint: [90, 55, 30], pitch: 0.78 },  
+    fishbowl: { name: 'Fishbowl / 金魚鉢', hw: (t) => t > 0.86 ? 0.2 : (circ(0.45, 0.45)(t) > 0.2 || t < 0.5 ? circ(0.45, 0.45)(t) : Math.max(0.2, circ(0.45, 0.45)(t))), tint: [90, 190, 255], objs: [['pebble', 5]], pitch: 0.95 },  
+    tube:     { name: 'Test tube / 試験管', hw: (t) => t < 0.1 ? circ(0.1, 0.1)(t) * 0.8 : 0.08, tint: [120, 255, 140], ticks: true, foot: true, pitch: 1.45 },  
+    vase:     { name: 'Vase / 花瓶', hw: (t) => t < 0.75 ? 0.08 + 0.2 * Math.sin(Math.PI * t / 0.75) : 0.08 + 0.02 * (t - 0.75) / 0.25, tint: [110, 200, 230], flower: true, pitch: 1.0 },  
+  };  
+    
+  // ---- 多角形の計算 ----  
+  function polyArea(p) {   // 面積と重心（頂点は閉じた順番）  
+    let a = 0, cx = 0, cy = 0;  
+    for (let i = 0, n = p.length; i < n; i++) {  
+      const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % n], c = x0 * y1 - x1 * y0;  
+      a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;  
+    }  
+    if (Math.abs(a) < 1e-12) return { area: 0, cx: 0, cy: 0 };  
+    return { area: Math.abs(a) / 2, cx: cx / (3 * a), cy: cy / (3 * a) };  
+  }  
+  function clipBelow(p, h) {   // y <= h の部分だけ残す  
+    const out = [];  
+    for (let i = 0, n = p.length; i < n; i++) {  
+      const A = p[i], B = p[(i + 1) % n], ia = A[1] <= h, ib = B[1] <= h;  
+      if (ia) out.push(A);  
+      if (ia !== ib) { const t = (h - A[1]) / (B[1] - A[1]); out.push([A[0] + (B[0] - A[0]) * t, h]); }  
+    }  
+    return out;  
+  }  
+  function chordAt(p, h) {   // 高さ h の水平線が多角形と交わる左右の x（水面の幅）  
+    let lo = Infinity, hi = -Infinity;  
+    for (let i = 0, n = p.length; i < n; i++) {  
+      const A = p[i], B = p[(i + 1) % n];  
+      if ((A[1] - h) * (B[1] - h) <= 0 && A[1] !== B[1]) { const x = A[0] + (B[0] - A[0]) * (h - A[1]) / (B[1] - A[1]); lo = Math.min(lo, x); hi = Math.max(hi, x); }  
+    }  
+    return lo <= hi ? [lo, hi] : null;  
+  }  
+  const areaBelow = (p, h) => { const c = clipBelow(p, h); return c.length < 3 ? { area: 0, cx: 0, cy: 0 } : polyArea(c); };  
+    
+  // 水以外のオブジェクト: r 半径 / rho 水に対する重さ（1 より小さいと浮く）/ e 反発  
+  const OBJ = { ice: { r: 0.05, rho: 0.88, e: 0.3 }, olive: { r: 0.04, rho: 1.1, e: 0.15 }, pebble: { r: 0.03, rho: 2.4, e: 0.25 } };  
+  function pointInPoly(p, x, y) {  
+    let c = false;  
+    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {  
+      if ((p[i][1] > y) !== (p[j][1] > y) && x < (p[j][0] - p[i][0]) * (y - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) c = !c;  
+    }  
+    return c;  
+  }  
+  const G = 3.2;          // 重力（容器の高さ / 秒^2）  
+  const BUOY = 1.4;       // 浮力のつよさ（演出用に水より少し重い液体として計算）  
+  const KN = 5200, CN = 40, KT = 90, MU = 0.7;   // 床との接触（ばね・減衰・摩擦）。重さに比例させて軽い形でも安定させる  
+    
+  function makeBody(shape, tankW, tankH) {  
+    const hw = shape.hw, from = shape.from || 0;  
+    const baseHalf = shape.foot ? 0.2 : Math.max(0.08, Math.min(hw(0.03), 0.3));   // 置いたときの底の幅  
+    const hwP = (t) => t < 0.012 ? Math.max(hw(t), baseHalf) : hw(t);  
+    const S = 48, sil = [], inner = [];  
+    for (let k = 0; k <= S; k++) { const t = k / S; sil.push([-hwP(t), t]); }  
+    for (let k = S; k >= 0; k--) { const t = k / S; sil.push([hwP(t), t]); }  
+    for (let k = 0; k <= S; k++) { const t = from + (1 - from) * k / S; inner.push([-hw(t), t]); }  
+    for (let k = S; k >= 0; k--) { const t = from + (1 - from) * k / S; inner.push([hw(t), t]); }  
+    const silInfo = polyArea(sil);  
+    // 内側の水の量（面積）を高さ t から求める表  
+    const NT = 240, cum = new Float64Array(NT + 1);  
+    for (let i = 1; i <= NT; i++) { const t0 = from + (1 - from) * (i - 1) / NT, t1 = from + (1 - from) * i / NT; cum[i] = cum[i - 1] + (hw(t0) + hw(t1)) * (t1 - t0); }  
+    const capacity = cum[NT];  
+    const areaAt = (t) => { const u = Math.max(0, Math.min(1, (t - from) / (1 - from))) * NT, i = Math.min(NT - 1, Math.floor(u)); return cum[i] + (cum[i + 1] - cum[i]) * (u - i); };  
+    const mShell = 0.03 * silInfo.area + 0.02;  
+    const cShell = silInfo.cy * 0.5;  
+    
+    const b = {  
+      shape, sil, inner, capacity, areaAt, baseHalf, silArea: silInfo.area, mShell,  
+      tankW, tankH,  
+      X: 0, Y: 0, th: 0, vx: 0, vy: 0, w: 0, clock: 0,  
+      V: 0, Vp: 0, level: 0, spill: 0, poolD: 0, sub: 0, chord: null, Cx: 0, Cy: 0, objects: [], events: [], wallW: 0,  
+      T(u, w) { const c = Math.cos(b.th), s = Math.sin(b.th); return [b.X + u * c - w * s, b.Y + u * s + w * c]; },  
+      // 落ちてきた水を加える: グラスの中へ（あふれた分は床へ）、または直接床へ  
+      addWater(v, toGlass) { if (toGlass) b.V += v; else b.Vp += v; },  
+      // 水以外のオブジェクトを、空のグラスの底に置く  
+      initObjects() {  
+        b.objects = []; let k = 0;  
+        for (const [kind, n] of (shape.objs || [])) {  
+          for (let i = 0; i < n; i++, k++) {  
+            const d = OBJ[kind];  
+            b.objects.push({ kind, r: d.r, rho: d.rho, e: d.e, x: (i - (n - 1) / 2) * d.r * 2.2, y: from + d.r * 1.2 + k * d.r * 2.4, vx: 0, vy: 0, th: i * 0.7, w: 0, last: 0 });  
+          }  
+        }  
+      },  
+      reset() { b.X = b.Y = b.th = b.vx = b.vy = b.w = 0; b.V = b.Vp = b.level = b.spill = b.poolD = b.sub = b.clock = 0; b.events = []; b.initObjects(); },  
+      // 水位から水の量（直立しているとき）  
+      volumeAtLevel: areaAt,  
+      // 1 ステップ進める。inflow: 容器に加わる水（面積 / 秒）  
+      step(dt, inflow) {  
+        const n = Math.max(1, Math.ceil(dt / (1 / 150))), h = dt / n;  
+        let spilled = 0;  
+        for (let i = 0; i < n; i++) spilled += b.sub1(h, inflow);  
+        b.spill += (spilled / dt - b.spill) * Math.min(1, dt * 8);  
+      },  
+      // --- 水以外のオブジェクト（氷・オリーブ・小石）: 水の浮力、グラスの壁、床、ほかのオブジェクトとの当たり判定 ---  
+      stepObjects(dt, Iw) {  
+        const objs = b.objects, now = (b.clock || 0), walls = [];  
+        // グラスの内側の壁（上の口は開いているので、上辺は含めない）  
+        const n = inner.length, S = (n - 2) / 2;  
+        for (let i = 0; i < n; i++) { if (i === S) continue; const A = Iw[i], B = Iw[(i + 1) % n]; walls.push([A, B]); }  
+        const hit = (o, speed, other) => { if (speed > 0.12 && now - o.last > 0.07) { o.last = now; b.events.push({ kind: o.kind, other, speed }); } };  
+        for (const o of objs) {  
+          // 水の中にいるか（グラスの中の水面か、床にたまった水面か）  
+          let level = -1e9;  
+          if (b.V > 1e-6 && pointInPoly(Iw, o.x, o.y)) level = b.level;  
+          if (b.poolD > 0) level = Math.max(level, b.poolD);  
+          const f = Math.max(0, Math.min(1, (level - (o.y - o.r)) / (2 * o.r)));  
+          const ay = -G + G * f / o.rho, drag = 0.02 + 3.2 * f;  
+          o.vx += (-drag * o.vx) * dt; o.vy += (ay - drag * o.vy) * dt; o.w += -(0.1 + 2 * f) * o.w * dt;  
+          o.x += o.vx * dt; o.y += o.vy * dt; o.th += o.w * dt;  
+          // 床と部屋の壁  
+          if (o.y < o.r) { o.y = o.r; if (o.vy < 0) { hit(o, -o.vy, 'floor'); o.vy = -o.vy * o.e; o.vx *= 0.92; } }  
+          const lim = (b.wallW || 3) / 2 - o.r;  
+          if (o.x < -lim) { o.x = -lim; o.vx = Math.abs(o.vx) * o.e; } else if (o.x > lim) { o.x = lim; o.vx = -Math.abs(o.vx) * o.e; }  
+          // グラスの壁（動いている壁の速さも考える）  
+          for (const [A, B] of walls) {  
+            const ex = B[0] - A[0], ey = B[1] - A[1], L2 = ex * ex + ey * ey || 1e-9;  
+            const u = Math.max(0, Math.min(1, ((o.x - A[0]) * ex + (o.y - A[1]) * ey) / L2)), cx = A[0] + ex * u, cy = A[1] + ey * u;  
+            let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);  
+            if (d >= o.r + 0.004) continue;  
+            if (d < 1e-6) { dx = 0; dy = 1; d = 1; }  
+            const nx = dx / d, ny = dy / d;  
+            o.x = cx + nx * (o.r + 0.004); o.y = cy + ny * (o.r + 0.004);  
+            const wx = b.vx - b.w * (cy - b.Cy), wy = b.vy + b.w * (cx - b.Cx);  
+            const rel = (o.vx - wx) * nx + (o.vy - wy) * ny;  
+            if (rel < 0) { o.vx -= (1 + o.e) * rel * nx; o.vy -= (1 + o.e) * rel * ny; o.w += (rel * 0.5) * (nx > 0 ? 1 : -1); hit(o, -rel, 'glass'); }  
+          }  
+        }  
+        // オブジェクトどうし  
+        for (let i = 0; i < objs.length; i++) for (let j = i + 1; j < objs.length; j++) {  
+          const a = objs[i], c = objs[j]; let dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy); const R = a.r + c.r;  
+          if (d >= R) continue; if (d < 1e-6) { dx = 1; dy = 0; d = 1; }  
+          const nx = dx / d, ny = dy / d, push = (R - d) / 2;  
+          a.x -= nx * push; a.y -= ny * push; c.x += nx * push; c.y += ny * push;  
+          const rel = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;  
+          if (rel < 0) { const m1 = a.rho * a.r * a.r, m2 = c.rho * c.r * c.r, k = (1 + Math.min(a.e, c.e)) * rel / (m1 + m2); a.vx += k * m2 * nx; a.vy += k * m2 * ny; c.vx -= k * m1 * nx; c.vy -= k * m1 * ny; hit(a, -rel, c.kind); }  
+        }  
+        for (const o of objs) if (!isFinite(o.x + o.y)) { o.x = 0; o.y = 0.2; o.vx = o.vy = 0; }  
+      },  
+      sub1(dt, inflow) {  
+        b.V += inflow * dt;  
+        const T = (p) => b.T(p[0], p[1]);  
+        const Iw = inner.map(T), Sw = sil.map(T);  
+        // --- 水面の高さ。縁より上は床（水槽）へこぼれる ---  
+        const rimL = b.T(-hw(1), 1), rimR = b.T(hw(1), 1), hcap = Math.min(rimL[1], rimR[1]);  
+        let ymin = 1e9; for (const p of Iw) ymin = Math.min(ymin, p[1]);  
+        const capA = areaBelow(Iw, hcap).area;  
+        let spilled = 0;  
+        if (b.V > capA) { spilled = b.V - capA; b.V = capA; b.Vp += spilled; b.level = hcap; }  
+        else { let lo = ymin, hi = hcap; for (let k = 0; k < 22; k++) { const m = (lo + hi) / 2; if (areaBelow(Iw, m).area < b.V) lo = m; else hi = m; } b.level = (lo + hi) / 2; }  
+        b.chord = b.V > 1e-6 ? chordAt(Iw, b.level) : null;  
+        const wat = b.V > 1e-6 ? areaBelow(Iw, b.level) : { area: 0, cx: 0, cy: 0 };  
+        b.Vp = Math.min(b.Vp, b.tankW * b.tankH);  
+        b.poolD = Math.min(b.tankH, b.Vp / b.tankW);  
+        // --- 重さと重心 ---  
+        b.Cx = 0; b.Cy = 0;  
+        const sc = b.T(0, cShell), mW = Math.max(0, b.V), m = mShell + mW;  
+        const Cx = (sc[0] * mShell + wat.cx * mW) / m, Cy = (sc[1] * mShell + wat.cy * mW) / m;  
+        b.Cx = Cx; b.Cy = Cy;  
+        let Fx = 0, Fy = -m * G, tq = 0;  
+        const add = (px, py, fx, fy) => { Fx += fx; Fy += fy; tq += (px - Cx) * fy - (py - Cy) * fx; };  
+        const vAt = (px, py) => [b.vx - b.w * (py - Cy), b.vy + b.w * (px - Cx)];  
+        // --- 浮力（水槽の水面より下にある輪郭の面積） ---  
+        const sub = b.poolD > 0 ? areaBelow(Sw, b.poolD) : { area: 0, cx: 0, cy: 0 };  
+        b.sub = sub.area;  
+        if (sub.area > 1e-6) add(sub.cx, sub.cy, 0, BUOY * G * sub.area);  
+        const frac = sub.area / silInfo.area;  
+        // --- 床と水槽の壁との接触 ---  
+        const kn = KN * m, cn = CN * m, kt = KT * m;  
+        for (const p of Sw) {  
+          const v = vAt(p[0], p[1]);  
+          if (p[1] < 0) {  
+            const fn = Math.max(0, kn * (-p[1]) - cn * v[1]);  
+            const ft = Math.max(-MU * fn, Math.min(MU * fn, -kt * v[0]));  
+            add(p[0], p[1], ft, fn);  
+          }  
+          const lim = (b.wallW || b.tankW) / 2;   // 横に倒れても壁に当たらないよう、壁は画面の外に置く  
+          if (p[0] < -lim) add(p[0], p[1], Math.max(0, kn * (-lim - p[0]) + cn * v[0]), 0);  
+          else if (p[0] > lim) add(p[0], p[1], -Math.max(0, kn * (p[0] - lim) + cn * v[0]), 0);  
+        }  
+        // --- 水面の波による揺さぶり（浮いたあとにゆらゆら傾いて、やがて倒れる） ---  
+        b.clock += dt;  
+        tq += 0.35 * frac * m * (Math.sin(1.1 * b.clock) + 0.6 * Math.sin(2.3 * b.clock + 1));  
+        // --- 水の抵抗 ---  
+        const dl = 0.06 + 2.5 * frac, da = 0.15 + 3.0 * frac;  
+        // 水の中では周りの水もいっしょに動くので、見かけの重さ（付加質量）を足す  
+        const mE = m + 0.9 * sub.area, IE = mE * 0.09;  
+        b.vx += (Fx / mE - dl * b.vx) * dt; b.vy += (Fy / mE - dl * b.vy) * dt; b.w += (tq / IE - da * b.w) * dt;  
+        b.vx = Math.max(-6, Math.min(6, b.vx)); b.vy = Math.max(-6, Math.min(6, b.vy)); b.w = Math.max(-12, Math.min(12, b.w));  
+        b.X += b.vx * dt; b.Y += b.vy * dt; b.th += b.w * dt;  
+        if (!isFinite(b.X + b.Y + b.th) || Math.abs(b.Y) > 6) { b.resets = (b.resets || 0) + 1; const keep = b.Vp; b.reset(); b.Vp = keep; }  
+        b.stepObjects(dt, Iw);  
+        return spilled;  
+      },  
+    };  
+    b.initObjects();  
+    return b;  
+  }  
   
 
   const Q = new URLSearchParams(location.search);
@@ -351,12 +351,12 @@
   }
   function landSound(kind) {
     if (!audible()) return;
-    const r = Math.random();
-    if (kind === 'glassWater') { const f = 560 + 300 * r; tone(f, f * 2.3, 0.18, 0.5); }                       // 小さな水面: 軽い「ポチャン」
-    else if (kind === 'pool') { const f = 250 + 90 * r; tone(f, f * 1.9, 0.34, 0.6); tone(f * 1.6, f * 3, 0.16, 0.25, 0.07); }   // 深い水: 低い「ボチャッ」＋泡
+    const r = Math.random(), lp = shape.pitch || 1;   // 液体の種類で水の音の高さを変える（軽い液体は高く、濃い液体は低く）
+    if (kind === 'glassWater') { const f = (560 + 300 * r) * lp; tone(f, f * 2.3, 0.18, 0.5); }                       // 小さな水面: 軽い「ポチャン」
+    else if (kind === 'pool') { const f = (250 + 90 * r) * lp; tone(f, f * 1.9, 0.34, 0.6); tone(f * 1.6, f * 3, 0.16, 0.25, 0.07); }   // 深い水: 低い「ボチャッ」＋泡
     else if (kind === 'glass') { const f = 2100 + 500 * r; tone(f, f, 0.45, 0.35); tone(f * 2.76, f * 2.76, 0.22, 0.14); tone(f * 4.1, f * 4.1, 0.1, 0.06); }   // ガラス: 高い「チン」
-    else if (kind === 'ice') { const f = 3000 + 800 * r; tone(f, f * 0.9, 0.09, 0.3); tone(620, 900, 0.1, 0.18); }     // 氷に当たる: 「カチッ」＋小さな水音
-    else if (kind === 'olive' || kind === 'pebble') { tone(900 + 200 * r, 600, 0.06, 0.3, 0, 'triangle'); tone(520, 780, 0.12, 0.2); }
+    else if (kind === 'ice') { const f = 3000 + 800 * r; tone(f, f * 0.9, 0.09, 0.3); tone(620 * lp, 900 * lp, 0.1, 0.18); }     // 氷に当たる: 「カチッ」＋小さな水音
+    else if (kind === 'olive' || kind === 'pebble') { tone(900 + 200 * r, 600, 0.06, 0.3, 0, 'triangle'); tone(520 * lp, 780 * lp, 0.12, 0.2); }
     else { tone(210, 95, 0.09, 0.55, 0, 'triangle'); tone(900, 700, 0.04, 0.12); }                             // 床: 「コッ」
   }
   // オブジェクト（氷・オリーブ・小石）が、グラスの壁・床・ほかのオブジェクトにぶつかった音
