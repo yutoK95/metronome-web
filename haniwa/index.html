@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>埴輪としずく（試作）</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1a14; font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; color: #eef3e8; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #hud { position: fixed; left: 14px; bottom: 14px; width: 260px; padding: 12px 14px; border-radius: 14px; background: rgba(12, 22, 16, 0.72); backdrop-filter: blur(6px); font-size: 13px; user-select: none; }
+  #hud .row { margin: 8px 0; } #hud .lab { display: flex; justify-content: space-between; opacity: .85; margin-bottom: 3px; }
+  #hud input[type=range] { width: 100%; accent-color: #e58aa6; }
+  #hud button { font: inherit; color: inherit; background: #2f4a38; border: 1px solid #55785f; border-radius: 8px; padding: 6px 12px; cursor: pointer; margin-right: 6px; }
+  #hud button:hover { background: #3b5c46; }
+  #count { position: fixed; top: 14px; left: 0; right: 0; text-align: center; font-size: 22px; font-weight: 700; letter-spacing: 2px; text-shadow: 0 2px 10px rgba(0,0,0,.6); pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="count"></div>
+<div id="hud">
+  <div class="row"><div class="lab"><span>テンポ（BPM）</span><b id="bv">60</b></div><input type="range" id="bpm" min="20" max="180" value="60"></div>
+  <div class="row"><div class="lab"><span>花が咲くまでの水の数</span><b id="nv">12</b></div><input type="range" id="need" min="3" max="40" value="12"></div>
+  <div class="row"><button id="reset">最初から</button><button id="snd">🔊 音 ON</button></div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  if (Q.get('ui') === '0') { $('hud').style.display = 'none'; }
+
+  // ---------------- 状態 ----------------
+  let bpm = Q.has('bpm') ? +Q.get('bpm') : 60, need = Q.has('need') ? +Q.get('need') : 12, soundOn = Q.get('sound') !== '0';
+  let t = 0, count = 0, drops = [], parts = [], nextLand = 0, wobble = 0, wobbleV = 0, wet = 0, bloomT = -1, ripple = 0;
+  let butterflies = [], nextButterflyAt = 0, bursts = [];
+  let soft = 0, chunks = [], lastThud = -9;   // soft: 水を含んで、どれだけやわらかく崩れたか（0〜1）
+  $('bpm').value = bpm; $('need').value = need; $('bv').textContent = bpm; $('nv').textContent = need;
+
+  // ---------------- 画面 ----------------
+  let W = 0, H = 0, dpr = 1, sc = 1, gy = 0;
+  function resize() {
+    dpr = Math.min(2, devicePixelRatio || 1); W = cv.width = Math.round(innerWidth * dpr); H = cv.height = Math.round(innerHeight * dpr);
+    sc = Math.min(W / 760, H / 860); gy = H * 0.9;
+  }
+  addEventListener('resize', resize); resize();
+  // 世界座標: 原点 = 埴輪の足元の中心、y は上向きが負。ドロップは y = -760 から降る
+  const HEAD_TOP = -312, SPROUT_Y = -306;
+  // 崩れると、埴輪が縦につぶれて低くなる。頭頂（水が当たる場所・花の根もと）も、それに合わせて下がる
+  const kY = () => 1 - 0.58 * Math.pow(soft, 1.25), headTop = () => HEAD_TOP * kY(), sproutY = () => SPROUT_Y * kY();
+
+  // ---------------- 音 ----------------
+  let actx = null;
+  const ensureAudio = () => { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state !== 'running') actx.resume(); } catch (e) { actx = null; } };
+  addEventListener('pointerdown', () => { if (soundOn) ensureAudio(); }, { capture: true }); addEventListener('keydown', () => { if (soundOn) ensureAudio(); }, { capture: true });
+  const audible = () => soundOn && actx && actx.state === 'running';
+  function tone(f0, f1, dur, amp, delay = 0, type = 'sine') {
+    if (!audible()) return;
+    const s = actx.currentTime + delay, o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, s); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, s + Math.min(dur, 0.08));
+    g.gain.setValueAtTime(0.0001, s); g.gain.exponentialRampToValueAtTime(amp, s + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, s + dur);
+    o.connect(g).connect(actx.destination); o.start(s); o.stop(s + dur + 0.02);
+  }
+  const plop = () => { const f = 520 + Math.random() * 220 + count * 8; tone(f, f * 2.2, 0.16, 0.4); tone(190, 120, 0.09, 0.45, 0, 'triangle'); };   // 水の「ポチャン」＋ 土の「コツ」
+  const bloomSound = () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f, 0.9, 0.22, i * 0.12));
+  const flutter = () => { tone(1400, 1800, 0.08, 0.1); tone(1800, 2200, 0.08, 0.08, 0.1); };
+
+  // ---------------- 更新 ----------------
+  function beat() { return bpm > 0 ? 60 / bpm : 1; }
+  function step(dt) {
+    t += dt;
+    // しずく: テンポに合わせて、着水（頭に当たる）がちょうど拍になるように落とす
+    const target = Math.max(0, Math.min(1, (count - need * 0.9) / (need * 2.6)));
+    soft += (target - soft) * Math.min(1, dt * 1.2);
+    const G = 2300, y0 = -760, fall = Math.sqrt(2 * (headTop() - y0) / G);
+    if (nextLand === 0) nextLand = t + fall + 0.2;
+    if (t >= nextLand - fall) { drops.push({ y: y0, vy: 0 }); nextLand += beat(); if (nextLand < t + fall) nextLand = t + fall + beat(); }
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const d = drops[i]; d.vy += G * dt; d.y += d.vy * dt;
+      if (d.y >= headTop()) { drops.splice(i, 1); hit(); }
+    }
+    // 頭のぷるん（ばね）
+    wobbleV += (-260 * wobble - 14 * wobbleV) * dt; wobble += wobbleV * dt; wet = Math.max(0, wet - dt * 0.1); ripple = Math.max(0, ripple - dt * 2);
+    for (const p of parts) { p.vy += 1500 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.8; }
+    parts = parts.filter((p) => p.life > 0 && p.y < 10);
+    for (const c of chunks) {   // 欠片: 落ちて、地面にたまる
+      if (c.rest) continue; c.vy += 1800 * dt; c.x += c.vx * dt; c.y += c.vy * dt; c.rot += c.vr * dt;
+      if (c.y >= c.floor) { c.y = c.floor; c.rest = true; if (t - lastThud > 0.12) { lastThud = t; tone(130 + Math.random() * 40, 70, 0.14, 0.28, 0, 'triangle'); } }
+    }
+    for (const b of bursts) b.age += dt; bursts = bursts.filter((b) => b.age < 1.4);
+    if (bloomT >= 0) bloomT += dt;
+    // 蝶: 花が咲いたあと少しして飛んでくる。さらに咲き続けるたびに増える（最大 3 匹）
+    if (bloomT >= 1.5 && butterflies.length === 0) spawnButterfly();
+    if (bloomT >= 0 && butterflies.length < 3 && count >= nextButterflyAt) spawnButterfly();
+    for (const b of butterflies) updateButterfly(b, dt);
+    $('count').textContent = soft > 0.6 ? '🌱 埴輪は土に還っていく…' : bloomT >= 0 ? (butterflies.length ? '🦋 花が咲いて、蝶が来ました' : '🌸 花が咲きました') : `💧 ${count} / ${need}`;
+  }
+  function hit() {
+    count++; if (soft > 0.12) crumble(1 + Math.floor(soft * 3)); wobbleV += 120; wet = Math.min(1, wet + 0.25); ripple = 1; plop();
+    for (let i = 0; i < 7; i++) parts.push({ x: (Math.random() - 0.5) * 30, y: headTop(), vx: (Math.random() - 0.5) * 220, vy: -(120 + Math.random() * 240), life: 1 });
+    if (count >= need && bloomT < 0) { bloomT = 0; bloomSound(); nextButterflyAt = count + Math.max(3, Math.round(need * 0.6)); for (let i = 0; i < 16; i++) bursts.push({ a: (i / 16) * Math.PI * 2, age: 0 }); }
+  }
+  function crumble(n) {   // 横から、土の欠片が剥がれ落ちる（落ちた欠片は、地面に残る）
+    for (let i = 0; i < n; i++) {
+      const sd = Math.random() < 0.5 ? -1 : 1, k = kY();
+      chunks.push({ x: sd * (58 + Math.random() * 20), y: -(30 + Math.random() * 190) * k, vx: sd * (40 + Math.random() * 120), vy: -60 - Math.random() * 120, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 8, s: 7 + Math.random() * 9 + soft * 6, floor: -2 - Math.random() * 10, rest: false, shade: Math.random() });
+    }
+    if (chunks.length > 70) chunks.splice(0, chunks.length - 70);
+  }
+  function spawnButterfly() {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    butterflies.push({ x: side * (W / sc / 2 + 80), y: -520 - Math.random() * 120, ph: Math.random() * 6, hue: [28, 205, 320][butterflies.length % 3], state: 'in', stateT: 0, landAt: 6 + Math.random() * 4 });
+    nextButterflyAt = count + Math.max(3, Math.round(need * 0.6)); flutter();
+  }
+  function flowerCenter() { return { x: 0, y: sproutY() - stemH() }; }
+  function updateButterfly(b, dt) {
+    b.stateT += dt; b.ph += dt;
+    const c = flowerCenter();
+    if (b.state === 'in') {                                     // 画面の外から、花のほうへ飛んでくる
+      const tx = c.x + Math.sin(b.ph * 1.1) * 90, ty = c.y - 50 + Math.sin(b.ph * 1.9) * 40, k = Math.min(1, dt * 1.4);
+      b.x += (tx - b.x) * k; b.y += (ty - b.y) * k;
+      if (Math.hypot(b.x - tx, b.y - ty) < 60) { b.state = 'fly'; b.stateT = 0; }
+    } else if (b.state === 'fly') {                               // 花のまわりをひらひら
+      const tx = c.x + Math.sin(b.ph * 0.9) * 130, ty = c.y - 40 + Math.sin(b.ph * 1.7) * 55 + Math.cos(b.ph * 0.5) * 20, k = Math.min(1, dt * 3);
+      b.x += (tx - b.x) * k; b.y += (ty - b.y) * k;
+      if (b.stateT > b.landAt) { b.state = 'land'; b.stateT = 0; }
+    } else if (b.state === 'land') {                              // 花にとまって、ゆっくり羽を動かす
+      const tx = c.x + 18, ty = c.y - 8, k = Math.min(1, dt * 2.5); b.x += (tx - b.x) * k; b.y += (ty - b.y) * k;
+      if (b.stateT > 3.2) { b.state = 'fly'; b.stateT = 0; b.landAt = 6 + Math.random() * 5; flutter(); }
+    }
+  }
+  const stemH = () => 130 * easeOut(Math.min(1, count / need));
+  const easeOut = (x) => 1 - Math.pow(1 - x, 2);
+
+  // ---------------- 描画 ----------------
+  function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // 空と丘（夕方のやわらかい色）
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#9fc9d8'); sky.addColorStop(0.6, '#e9efd9'); sky.addColorStop(1, '#f1e7c6');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#9fbf9a'; ctx.beginPath(); ctx.moveTo(0, gy - 90 * sc); for (let x = 0; x <= W; x += 40) ctx.lineTo(x, gy - (100 + 40 * Math.sin(x * 0.004 + 1.2)) * sc); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.fill();
+    ctx.fillStyle = '#7fae6e'; ctx.fillRect(0, gy, W, H - gy);
+    ctx.fillStyle = '#6a9a5c'; ctx.fillRect(0, gy, W, 4 * sc);
+    ctx.setTransform(sc, 0, 0, sc, W / 2, gy);
+    // 影
+    ctx.fillStyle = 'rgba(40,60,30,0.25)'; ctx.beginPath(); ctx.ellipse(0, 6, 120, 16, 0, 0, 7); ctx.fill();
+    drawHaniwa();
+    drawFlower();
+    drawChunks();
+    // 水滴・しぶき
+    for (const d of drops) drawDrop(0, d.y, d.vy);
+    for (const p of parts) { ctx.beginPath(); ctx.arc(p.x, p.y, 3.5 * p.life + 0.5, 0, 7); ctx.fillStyle = `rgba(120,185,235,${0.9 * p.life})`; ctx.fill(); }
+    for (const b of butterflies) drawButterfly(b);
+  }
+  function drawDrop(x, y, vy) {
+    const r = 9, st = 1 + Math.min(0.8, vy / 2600);
+    ctx.beginPath(); ctx.moveTo(x, y - r * 2.2 * st); ctx.quadraticCurveTo(x + r * 1.1, y - r * 0.2, x, y + r); ctx.quadraticCurveTo(x - r * 1.1, y - r * 0.2, x, y - r * 2.2 * st);
+    ctx.fillStyle = 'rgba(130,195,240,0.95)'; ctx.fill(); ctx.strokeStyle = 'rgba(70,130,190,0.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x - 2.5, y - 2, 2, 0, 7); ctx.fillStyle = '#fff'; ctx.fill();
+  }
+  function clay(wetness) {   // 濡れると、土の色が濃くなる
+    const m = (a, b) => Math.round(a + (b - a) * wetness);
+    return { base: `rgb(${m(206, 150)},${m(120, 80)},${m(70, 46)})`, light: `rgb(${m(226, 176)},${m(146, 104)},${m(92, 64)})`, dark: `rgb(${m(160, 112)},${m(84, 56)},${m(46, 30)})` };
+  }
+  function drawHaniwa() {
+    const c = clay(Math.min(1, wet + soft * 0.75)), sq = wobble * 0.012, sy = kY(), sx = 1 + 0.32 * soft;
+    ctx.save(); ctx.scale((1 + sq) * sx, (1 - sq) * sy);
+    // 胴（円筒）: 少しくびれて、まるい
+    const body = () => { ctx.beginPath(); ctx.moveTo(-80, 0); ctx.bezierCurveTo(-82, -60, -64, -150, -62, -200); ctx.lineTo(62, -200); ctx.bezierCurveTo(64, -150, 82, -60, 80, 0); ctx.closePath(); };
+    body(); let g = ctx.createLinearGradient(-80, 0, 80, 0); g.addColorStop(0, c.dark); g.addColorStop(0.35, c.light); g.addColorStop(1, c.dark); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = c.dark; ctx.lineWidth = 3; ctx.stroke();
+    // 円筒の帯（突帯）
+    ctx.strokeStyle = c.dark; ctx.lineWidth = 7; ctx.lineCap = 'round';
+    for (const [y, w] of [[-34, 79], [-96, 70], [-158, 64]]) { ctx.beginPath(); ctx.moveTo(-w, y); ctx.quadraticCurveTo(0, y + 12, w, y); ctx.stroke(); }
+    ctx.strokeStyle = c.light; ctx.lineWidth = 2.5; for (const [y, w] of [[-38, 77], [-100, 68], [-162, 62]]) { ctx.beginPath(); ctx.moveTo(-w, y); ctx.quadraticCurveTo(0, y + 12, w, y); ctx.stroke(); }
+    // 透かし穴（丸い穴）
+    ctx.fillStyle = '#2a160c'; ctx.beginPath(); ctx.ellipse(0, -66, 16, 22, 0, 0, 7); ctx.fill();
+    // 腕（左右に張り出す短い腕）
+    for (const sd of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(sd * 60, -178); ctx.quadraticCurveTo(sd * 112, -176, sd * 118, -130); ctx.quadraticCurveTo(sd * 100, -128, sd * 98, -148); ctx.quadraticCurveTo(sd * 84, -158, sd * 60, -156); ctx.closePath();
+      ctx.fillStyle = c.base; ctx.fill(); ctx.strokeStyle = c.dark; ctx.lineWidth = 3; ctx.stroke();
+    }
+    // 頭: 丸い頭と、つるりとした頭頂（水が当たる場所）
+    const hx = 0, hy = -252;
+    ctx.beginPath(); ctx.ellipse(hx, hy, 54, 60, 0, 0, 7); g = ctx.createRadialGradient(hx - 16, hy - 24, 6, hx, hy, 66); g.addColorStop(0, c.light); g.addColorStop(1, c.base); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = c.dark; ctx.lineWidth = 3; ctx.stroke();
+    // 首の帯
+    ctx.strokeStyle = c.dark; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(-50, -205); ctx.quadraticCurveTo(0, -192, 50, -205); ctx.stroke();
+    // 顔: 丸い目と口の穴（埴輪らしく、ぽっかり）
+    ctx.fillStyle = '#2a160c';
+    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.ellipse(sd * 20, hy + 2, 8.5, 11, 0, 0, 7); ctx.fill(); }
+    ctx.beginPath(); ctx.ellipse(0, hy + 32, 8, 10, 0, 0, 7); ctx.fill();
+    // 頭頂の小さなくぼみ（草が生えるところ）: 濡れるとしっとり
+    ctx.fillStyle = `rgba(60,34,18,${0.35 + 0.4 * wet})`; ctx.beginPath(); ctx.ellipse(0, SPROUT_Y + 2, 16, 4.5, 0, 0, 7); ctx.fill();
+    ctx.restore();
+    drawDecay(c);
+    // 水が当たった波紋
+    if (ripple > 0.02) { ctx.strokeStyle = `rgba(160,210,245,${0.8 * ripple})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(0, sproutY() + 2, 16 + 34 * (1 - ripple), 4.5 + 9 * (1 - ripple), 0, 0, 7); ctx.stroke(); }
+  }
+  function drawDecay(c) {
+    if (soft < 0.05) return;
+    // 図形は、今の（つぶれた）座標系の中で描く。泥のしずく跡: 上から下へ、色の濃い筋
+    ctx.save(); ctx.scale(1 + 0.32 * soft, kY());
+    ctx.lineCap = 'round';
+    const n = 7; for (let i = 0; i < n; i++) {
+      const x = -40 + i * 13.3 + Math.sin(i * 7.1) * 4, len = (30 + 140 * soft) * (0.55 + 0.45 * Math.abs(Math.sin(i * 3.3 + 1))), top = -262 + (i % 3) * 20;
+      ctx.strokeStyle = `rgba(92,52,28,${0.18 + 0.4 * soft})`; ctx.lineWidth = 5 + 3 * soft;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.bezierCurveTo(x + 3, top + len * 0.4, x - 3, top + len * 0.7, x + 1, top + len); ctx.stroke();
+    }
+    // ひび割れ
+    if (soft > 0.22) {
+      ctx.strokeStyle = `rgba(60,32,16,${Math.min(0.9, (soft - 0.15) * 1.5)})`; ctx.lineWidth = 2.2;
+      for (const [x0, y0] of [[-30, -150], [34, -90], [-10, -280], [48, -230], [-48, -40]]) {
+        ctx.beginPath(); ctx.moveTo(x0, y0); let x = x0, y = y0; for (let k = 0; k < 4; k++) { x += (Math.sin(x0 + k * 2.1) * 12); y += 14 + 10 * soft; ctx.lineTo(x, y); } ctx.stroke();
+      }
+    }
+    // 目と口の穴が、だらんと伸びる
+    if (soft > 0.35) { ctx.fillStyle = '#2a160c'; for (const sd of [-1, 1]) { ctx.beginPath(); ctx.ellipse(sd * 20, -250 + 8 * soft, 8.5 + 2 * soft, 11 + 22 * (soft - 0.35), 0, 0, 7); ctx.fill(); } ctx.beginPath(); ctx.ellipse(0, -220, 8 + 3 * soft, 10 + 20 * (soft - 0.35), 0, 0, 7); ctx.fill(); }
+    ctx.restore();
+    // 足元にたまった泥の山（崩れるほど大きくなる）
+    ctx.fillStyle = c.dark; ctx.beginPath(); ctx.ellipse(0, 4, 90 + 85 * soft, 6 + 40 * soft, 0, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = c.base; ctx.beginPath(); ctx.ellipse(0, 4, 80 + 70 * soft, 4 + 30 * soft, 0, Math.PI, 0); ctx.fill();
+  }
+  function drawChunks() {
+    for (const c of chunks) {
+      ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.rot);
+      ctx.fillStyle = `rgb(${150 + 40 * c.shade},${84 + 24 * c.shade},${48 + 14 * c.shade})`; ctx.strokeStyle = 'rgba(70,36,18,.8)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-c.s, -c.s * 0.4); ctx.lineTo(-c.s * 0.2, -c.s * 0.8); ctx.lineTo(c.s * 0.9, -c.s * 0.3); ctx.lineTo(c.s * 0.6, c.s * 0.6); ctx.lineTo(-c.s * 0.7, c.s * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+  }
+  function drawFlower() {
+    const s = Math.min(1, count / need); if (count <= 0) return;
+    const h = stemH(), sway = Math.sin(t * 1.4) * 3 * s + wobble * 2, top = { x: sway * 1.5, y: sproutY() - h };
+    ctx.lineCap = 'round';
+    // 茎
+    ctx.strokeStyle = '#4f8f3a'; ctx.lineWidth = 6 - 2 * (1 - s); ctx.beginPath(); ctx.moveTo(0, sproutY()); ctx.quadraticCurveTo(sway, sproutY() - h * 0.5, top.x, top.y); ctx.stroke();
+    // 葉（水が増えるたびに大きくなる）
+    for (const [at, sd] of [[0.28, -1], [0.5, 1], [0.7, -1]]) {
+      if (s < at * 0.9) continue; const k = Math.min(1, (s - at * 0.9) / 0.25), py = sproutY() - h * at, px = sway * at * 1.3;
+      ctx.save(); ctx.translate(px, py); ctx.rotate(sd * (-0.9 + 0.2 * Math.sin(t * 1.6 + at * 9))); ctx.scale(k, k);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(26, -14, 48, -6, 54, 6); ctx.bezierCurveTo(36, 16, 14, 12, 0, 0); ctx.fillStyle = '#6fb24d'; ctx.fill(); ctx.strokeStyle = '#3f7a30'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
+      if (sd < 0) { ctx.save(); } else ctx.save(); ctx.restore();
+    }
+    // つぼみ → 花
+    if (bloomT < 0) {
+      const r = 6 + 10 * s; ctx.beginPath(); ctx.ellipse(top.x, top.y, r * 0.8, r * 1.1, 0, 0, 7); ctx.fillStyle = s > 0.8 ? '#f08aa8' : '#7bb85a'; ctx.fill(); ctx.strokeStyle = '#3f7a30'; ctx.lineWidth = 1.5; ctx.stroke();
+    } else {
+      const b = Math.min(1, bloomT / 1.6), e = 1 - Math.pow(1 - b, 3), n = 8, R = 34 * e;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + t * 0.05 - Math.PI / 2;
+        ctx.save(); ctx.translate(top.x, top.y); ctx.rotate(a); ctx.beginPath(); ctx.ellipse(R * 0.62, 0, R * 0.62, R * 0.32 * (0.4 + 0.6 * e), 0, 0, 7);
+        ctx.fillStyle = i % 2 ? '#f6a6bd' : '#fbc3d2'; ctx.fill(); ctx.strokeStyle = 'rgba(190,80,110,.55)'; ctx.lineWidth = 1.2; ctx.stroke(); ctx.restore();
+      }
+      ctx.beginPath(); ctx.arc(top.x, top.y, 9 * e + 2, 0, 7); ctx.fillStyle = '#f7d54a'; ctx.fill(); ctx.strokeStyle = '#c9a020'; ctx.lineWidth = 1.5; ctx.stroke();
+      // 咲いた瞬間の光
+      for (const bs of bursts) { const k = bs.age / 1.4; ctx.beginPath(); ctx.arc(top.x + Math.cos(bs.a) * (30 + 90 * k), top.y + Math.sin(bs.a) * (30 + 90 * k), 4 * (1 - k) + 0.5, 0, 7); ctx.fillStyle = `rgba(255,236,160,${1 - k})`; ctx.fill(); }
+    }
+  }
+  function drawButterfly(b) {
+    const flap = b.state === 'land' ? 0.55 + 0.45 * Math.sin(b.ph * 4) : Math.abs(Math.sin(b.ph * 16)), dirx = Math.cos(b.ph * 0.9 + 0.5) >= 0 ? 1 : -1;
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(Math.sin(b.ph * 2.3) * 0.25); ctx.scale(dirx, 1);
+    const col = `hsl(${b.hue},85%,62%)`, col2 = `hsl(${b.hue + 25},90%,78%)`;
+    for (const sd of [-1, 1]) {
+      ctx.save(); ctx.scale(1, 1); ctx.rotate(sd * (0.15 + 0.5 * (1 - flap)) * -1 * 0);
+      ctx.beginPath(); ctx.ellipse(sd * 13 * (0.35 + 0.65 * flap), -6, 14 * (0.3 + 0.7 * flap), 17, sd * 0.5, 0, 7); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = 'rgba(40,20,10,.7)'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(sd * 10 * (0.35 + 0.65 * flap), 9, 9 * (0.3 + 0.7 * flap), 11, -sd * 0.4, 0, 7); ctx.fillStyle = col2; ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+    ctx.strokeStyle = '#2b1a10'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(0, 14); ctx.stroke();
+    ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, -14); ctx.quadraticCurveTo(-6, -24, -10, -26); ctx.moveTo(0, -14); ctx.quadraticCurveTo(6, -24, 10, -26); ctx.stroke(); ctx.restore();
+  }
+
+  // ---------------- 操作・起動 ----------------
+  $('bpm').oninput = (e) => { bpm = +e.target.value; $('bv').textContent = bpm; nextLand = 0; };
+  $('need').oninput = (e) => { need = +e.target.value; $('nv').textContent = need; };
+  $('reset').onclick = () => { soft = 0; chunks = []; count = 0; drops = []; parts = []; nextLand = 0; wobble = wobbleV = wet = 0; bloomT = -1; butterflies = []; bursts = []; nextButterflyAt = 0; };
+  $('snd').onclick = () => { soundOn = !soundOn; $('snd').textContent = soundOn ? '🔊 音 ON' : '🔇 音 OFF'; if (soundOn) ensureAudio(); };
+  addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); $('reset').onclick(); } });
+  if (Q.has('ff')) { const sec = parseFloat(Q.get('ff')); for (let i = 0; i < sec * 60; i++) step(1 / 60); }
+  let last = performance.now();
+  const frame = (now) => { const dt = Math.min(0.05, (now - last) / 1000); last = now; step(dt); draw(); requestAnimationFrame(frame); };
+  // 見えていないあいだも、時間が進むように（Web Worker のタイマーで更新だけ進める）
+  try { const wk = new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0)},50)'], { type: 'text/javascript' }))); wk.onmessage = () => { if (!document.hidden) return; const n = performance.now(), dt = Math.min(0.5, (n - last) / 1000); last = n; step(dt); }; } catch (e) { /* なくても動く */ }
+  window.__step = step; window.__draw = draw; window.__S = () => ({ count, need, bloomT, butterflies: butterflies.length, soft });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
