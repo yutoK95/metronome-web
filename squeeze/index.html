@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>スクイーズ（three.js 試作）</title>
+<title>スクイーズ 埴輪（three.js 試作）</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #f4e9e4; font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; color: #5a4038; }
   canvas { display: block; touch-action: none; }
@@ -31,14 +31,26 @@ import { RoomEnvironment } from 'three/addons/RoomEnvironment.js';
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
 
 // ============================================================ 形（名前・色・つぶれ方）
-const SHAPES = {
-  mochi: { name: 'もち', color: 0xfff1f3, blush: true, make: (p) => { const y = p.y * 0.74; return new THREE.Vector3(p.x * 1.05, y < -0.4 ? -0.4 + (y + 0.4) * 0.12 : y, p.z * 1.05); } },
-  bun:   { name: 'パン', color: 0xf3c98b, blush: true, make: (p) => { const y = p.y * 0.62; return new THREE.Vector3(p.x * 1.2, y < -0.3 ? -0.3 + (y + 0.3) * 0.1 : y, p.z * 1.0); } },
-  egg:   { name: 'たまご', color: 0xfff6d8, blush: true, make: (p) => { const k = 1 - 0.16 * p.y; return new THREE.Vector3(p.x * 0.88 * k, p.y * 1.05, p.z * 0.88 * k); } },
-  melon: { name: 'メロン', color: 0xbfe8b0, blush: false, make: (p) => { const y = p.y * 0.85; return new THREE.Vector3(p.x, y < -0.55 ? -0.55 + (y + 0.55) * 0.12 : y, p.z); } },
-};
-let shapeKey = Q.get('shape') && SHAPES[Q.get('shape')] ? Q.get('shape') : 'mochi';
-for (const [k, s] of Object.entries(SHAPES)) { const b = document.createElement('button'); b.textContent = s.name; b.dataset.k = k; b.onclick = () => buildBody(k); $('shapes').appendChild(b); }
+const SHAPES = { haniwa: { name: '埴輪', color: 0xe38a60, blush: true } };
+let shapeKey = 'haniwa';
+// 踊る埴輪のかたち: 丸いカプセルを、なめらかにつなげたもの（中心から見て、外側へ向かう距離を測る）
+const sdCap = (p, a, b, r) => { const pax = p.x - a.x, pay = p.y - a.y, paz = p.z - a.z, bax = b.x - a.x, bay = b.y - a.y, baz = b.z - a.z; const h = Math.max(0, Math.min(1, (pax * bax + pay * bay + paz * baz) / (bax * bax + bay * bay + baz * baz || 1e-9))); return Math.hypot(pax - bax * h, pay - bay * h, paz - baz * h) - r; };
+const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const PARTS = [   // [はじ1, はじ2, はんけい]
+  [V3(0, -0.95, 0), V3(0, 0.0, 0), 0.6],           // どう（下が少し広い）
+  [V3(0, -0.95, 0), V3(0, -0.8, 0), 0.68],
+  [V3(0, 0.95, 0), V3(0, 0.95, 0), 0.6],           // あたま
+  [V3(0.5, 0.15, 0), V3(0.95, 0.6, 0), 0.31],       // 右うで: 上へ
+  [V3(0.95, 0.6, 0), V3(1.0, 1.05, 0), 0.29],
+  [V3(-0.5, 0.15, 0), V3(-0.95, 0.1, 0), 0.31],     // 左うで: 横から上へ（おどっている）
+  [V3(-0.95, 0.1, 0), V3(-1.1, 0.55, 0), 0.29],
+];
+const haniwaSDF = (p) => { let d = 1e9; for (const [a, b, r] of PARTS) d = smin(d, sdCap(p, a, b, r), 0.3); return d; };
+const HEAD_C = V3(0, 0.95, 0), ORIGIN = V3(0, 0.2, 0);
+function haniwaRadius(dir) { let t = 0, step = 0.02; while (t < 3 && haniwaSDF(V3(ORIGIN.x + dir.x * t, ORIGIN.y + dir.y * t, ORIGIN.z + dir.z * t)) < 0) t += step; let lo = t - step, hi = t; for (let k = 0; k < 8; k++) { const m = (lo + hi) / 2; if (haniwaSDF(V3(ORIGIN.x + dir.x * m, ORIGIN.y + dir.y * m, ORIGIN.z + dir.z * m)) < 0) lo = m; else hi = m; } return (lo + hi) / 2; }
+SHAPES.haniwa.make = (p) => { const t = haniwaRadius(p); return V3(ORIGIN.x + p.x * t, ORIGIN.y + p.y * t, ORIGIN.z + p.z * t); };
+$('shapes').style.display = 'none';
 
 // ============================================================ three.js の準備
 let renderer;
@@ -50,12 +62,10 @@ const scene = new THREE.Scene();
 { const c = document.createElement('canvas'); c.width = 4; c.height = 256; const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#fbe8ee'); gr.addColorStop(1, '#f1ddd0'); g.fillStyle = gr; g.fillRect(0, 0, 4, 256); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t; }
 const pmrem = new THREE.PMREMGenerator(renderer); scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.6;
 const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 50);
-function placeCamera() { const asp = innerWidth / innerHeight; camera.position.set(0, 2.5, asp < 0.9 ? 8.6 : 6.4); camera.lookAt(0, 0.35, 0); camera.aspect = asp; camera.updateProjectionMatrix(); camera.updateMatrixWorld(true); }
+function placeCamera() { const asp = innerWidth / innerHeight; camera.position.set(0, 0.6, asp < 0.9 ? 10.5 : 7.6); camera.lookAt(0, 0.1, 0); camera.aspect = asp; camera.updateProjectionMatrix(); camera.updateMatrixWorld(true); }
 placeCamera();
-const sun = new THREE.DirectionalLight(0xfff2e6, 2.2); sun.position.set(-2.5, 5, 3.5); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: 1, far: 14 }); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.02; scene.add(sun);
+const sun = new THREE.DirectionalLight(0xfff2e6, 2.2); sun.position.set(-2.5, 5, 3.5); sun.castShadow = false; sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: 1, far: 14 }); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.02; scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xffeef2, 0xe9d4c8, 0.6));
-const table = new THREE.Mesh(new THREE.CircleGeometry(6, 64), new THREE.MeshStandardMaterial({ color: 0xfbf3ee, roughness: 0.9 })); table.rotation.x = -Math.PI / 2; table.receiveShadow = true; scene.add(table);
-const tray = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.3, 0.08, 64), new THREE.MeshStandardMaterial({ color: 0xf6d6dc, roughness: 0.6 })); tray.position.y = -0.04; tray.receiveShadow = true; /* scene.add(tray); */
 
 // ============================================================ やわらかい体（頂点ごとに動く、位置ベースの簡易ソフトボディ）
 let body = null, N = 0, mesh, geo, R, X, XP, edges, restLen, faces, neighbors, normals, V0 = 0, Atot = 1, faceParts = [], bodyKey;
@@ -73,7 +83,7 @@ function buildBody(key) {
   N = pos.length / 3; const sh = SHAPES[key]; R = new Float32Array(N * 3);
   let minY = 1e9; const rv = [];
   for (let i = 0; i < N; i++) { const v = sh.make(new THREE.Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])); rv.push(v); minY = Math.min(minY, v.y); }
-  for (let i = 0; i < N; i++) { R[i * 3] = rv[i].x; R[i * 3 + 1] = rv[i].y - minY + 0.005; R[i * 3 + 2] = rv[i].z; }
+  for (let i = 0; i < N; i++) { R[i * 3] = rv[i].x; R[i * 3 + 1] = rv[i].y; R[i * 3 + 2] = rv[i].z; }
   X = new Float32Array(R); XP = new Float32Array(R); faces = new Uint32Array(idx);
   const eset = new Set(), el = []; neighbors = Array.from({ length: N }, () => []);
   for (let f = 0; f < faces.length; f += 3) for (let k = 0; k < 3; k++) { const a = faces[f + k], b = faces[f + (k + 1) % 3], key2 = a < b ? a * 1e6 + b : b * 1e6 + a; if (!eset.has(key2)) { eset.add(key2); el.push(a, b); neighbors[a].push(b); neighbors[b].push(a); } }
@@ -82,20 +92,20 @@ function buildBody(key) {
   geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(X, 3)); geo.setIndex(new THREE.BufferAttribute(faces, 1)); geo.computeVertexNormals(); normals = geo.attributes.normal.array;
   V0 = volume(); Atot = area();
   mesh = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: sh.color, roughness: 0.42, metalness: 0, sheen: 1, sheenColor: new THREE.Color(0xffffff), sheenRoughness: 0.4, clearcoat: 0.25, clearcoatRoughness: 0.35, envMapIntensity: 1 }));
-  mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false; scene.add(mesh);
+  mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false; scene.add(mesh);
   addFace(sh);
 }
 function volume() { let v = 0; for (let f = 0; f < faces.length; f += 3) { const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3; v += (X[a] * (X[b + 1] * X[c + 2] - X[b + 2] * X[c + 1]) - X[a + 1] * (X[b] * X[c + 2] - X[b + 2] * X[c]) + X[a + 2] * (X[b] * X[c + 1] - X[b + 1] * X[c])) / 6; } return v; }
 function area() { let s = 0; for (let f = 0; f < faces.length; f += 3) { const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3; const ux = X[b] - X[a], uy = X[b + 1] - X[a + 1], uz = X[b + 2] - X[a + 2], vx = X[c] - X[a], vy = X[c + 1] - X[a + 1], vz = X[c + 2] - X[a + 2]; s += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx); } return s; }
 // 顔: 近くの頂点にくっつけて、体といっしょに動かす
-function nearest(dir) { let best = 0, bd = -2; for (let i = 0; i < N; i++) { const x = R[i * 3], y = R[i * 3 + 1] - 0.35, z = R[i * 3 + 2], l = Math.hypot(x, y, z) || 1, d = (x * dir.x + y * dir.y + z * dir.z) / l; if (d > bd) { bd = d; best = i; } } return best; }
+function nearest(dir) { let best = 0, bd = -2; for (let i = 0; i < N; i++) { const x = R[i * 3] - HEAD_C.x, y = R[i * 3 + 1] - HEAD_C.y, z = R[i * 3 + 2] - HEAD_C.z, l = Math.hypot(x, y, z) || 1, d = (x * dir.x + y * dir.y + z * dir.z) / l; if (d > bd) { bd = d; best = i; } } return best; }
 function addFace(sh) {
   const mk = (geom, mat, dir, push, scale) => { const i = nearest(dir.clone().normalize()), o = new THREE.Mesh(geom, mat); if (scale) o.scale.copy(scale); scene.add(o); faceParts.push({ obj: o, i, push }); };
   const black = new THREE.MeshStandardMaterial({ color: 0x2a1c1a, roughness: 0.3 });
-  mk(new THREE.SphereGeometry(0.075, 20, 14), black, new THREE.Vector3(-0.3, 0.12, 1), 0.02, new THREE.Vector3(1, 1.2, 0.6));
-  mk(new THREE.SphereGeometry(0.075, 20, 14), black, new THREE.Vector3(0.3, 0.12, 1), 0.02, new THREE.Vector3(1, 1.2, 0.6));
-  mk(new THREE.TorusGeometry(0.06, 0.012, 8, 20, Math.PI), black, new THREE.Vector3(0, -0.02, 1), 0.012, null); faceParts[faceParts.length - 1].obj.rotation.z = Math.PI;
-  if (sh.blush) { const pink = new THREE.MeshStandardMaterial({ color: 0xff9bb0, roughness: 0.8, transparent: true, opacity: 0.6 }); mk(new THREE.SphereGeometry(0.1, 16, 12), pink, new THREE.Vector3(-0.62, -0.02, 0.9), 0.0, new THREE.Vector3(1.2, 0.7, 0.3)); mk(new THREE.SphereGeometry(0.1, 16, 12), pink, new THREE.Vector3(0.62, -0.02, 0.9), 0.0, new THREE.Vector3(1.2, 0.7, 0.3)); }
+  mk(new THREE.SphereGeometry(0.09, 20, 14), black, new THREE.Vector3(-0.38, 0.2, 1), 0.01, new THREE.Vector3(1, 1, 0.5));   // 埴輪の、まるい目
+  mk(new THREE.SphereGeometry(0.09, 20, 14), black, new THREE.Vector3(0.38, 0.2, 1), 0.01, new THREE.Vector3(1, 1, 0.5));
+  mk(new THREE.SphereGeometry(0.075, 20, 14), black, new THREE.Vector3(0, -0.32, 1), 0.01, new THREE.Vector3(1, 1, 0.5));        // まるい口
+  if (sh.blush) { const pink = new THREE.MeshStandardMaterial({ color: 0xff9bb0, roughness: 0.8, transparent: true, opacity: 0.6 }); mk(new THREE.SphereGeometry(0.1, 16, 12), pink, new THREE.Vector3(-0.8, -0.1, 0.75), 0.0, new THREE.Vector3(1.2, 0.7, 0.3)); mk(new THREE.SphereGeometry(0.1, 16, 12), pink, new THREE.Vector3(0.8, -0.1, 0.75), 0.0, new THREE.Vector3(1.2, 0.7, 0.3)); }
 }
 
 // ============================================================ 指（押す丸い先）
@@ -127,14 +137,13 @@ let defNow = 0, lastDef = 0;
 function sub(dt) {
   // 指の位置: 画面の位置の延長上で、押している時間に応じて、奥へ
   if (finger.on) {
-    finger.hold += dt; finger.depth = Math.min(0.85, finger.hold * 0.8);
+    finger.hold += dt; finger.depth = Math.min(0.55, finger.hold * 0.8);
     ndc.set(finger.sx, finger.sy); ray.setFromCamera(ndc, camera);
     finger.c.copy(ray.ray.origin).addScaledVector(ray.ray.direction, finger.d0 + finger.depth);
     fingerVis.visible = true; fingerVis.position.copy(finger.c); fingerVis.scale.setScalar(finger.r); fingerVis.material.opacity = 0.0;
   } else fingerVis.visible = false;
   // ベルレ積分
   for (let i = 0; i < N * 3; i++) { const x = X[i], v = (x - XP[i]) * P.damp; XP[i] = x; X[i] = x + v; }
-  for (let i = 0; i < N; i++) X[i * 3 + 1] -= 0.0006;                               // 重力（ほんの少し）
   // 元の形へ、ゆっくり戻る力
   for (let i = 0; i < N * 3; i++) X[i] += (R[i] - X[i]) * P.rest;
   for (let it = 0; it < 3; it++) {
@@ -147,8 +156,6 @@ function sub(dt) {
     const V = volume(), dV = V0 - V; if (Math.abs(dV) > 1e-5) { const g = THREE.MathUtils.clamp(dV / Atot, -0.02, 0.02) * (finger.on ? P.vol : P.vol * 0.07); for (let i = 0; i < N; i++) { X[i * 3] += normals[i * 3] * g; X[i * 3 + 1] += normals[i * 3 + 1] * g; X[i * 3 + 2] += normals[i * 3 + 2] * g; } }
     // 指（丸い先）にめり込まない
     if (finger.on) for (let i = 0; i < N; i++) { const dx = X[i * 3] - finger.c.x, dy = X[i * 3 + 1] - finger.c.y, dz = X[i * 3 + 2] - finger.c.z, d = Math.hypot(dx, dy, dz); if (d < finger.r && d > 1e-6) { const k = finger.r / d; X[i * 3] = finger.c.x + dx * k; X[i * 3 + 1] = finger.c.y + dy * k; X[i * 3 + 2] = finger.c.z + dz * k; } }
-    // 台より下には行かない
-    for (let i = 0; i < N; i++) if (X[i * 3 + 1] < floorY) X[i * 3 + 1] = floorY;
   }
 }
 function step(dt) {
