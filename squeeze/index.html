@@ -17,7 +17,7 @@
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
 </head>
 <body>
-<div id="hint">WASD で歩く（Shift でダッシュ）／ドラッグか矢印キーで視点／さわると、ぷにっ</div>
+<div id="hint">WASD で転がる（Shift でダッシュ）／ドラッグか矢印キーで視点／タップで、ぽーんと飛ぶ</div>
 <div id="hud">
   <div class="row"><div class="lab"><span>戻るはやさ</span><b id="sv">ゆっくり</b></div><input type="range" id="soft" min="0" max="100" value="25"></div>
   <div class="row"><div class="lab"><span>やわらかさ</span><b id="fv">ふつう</b></div><input type="range" id="firm" min="0" max="100" value="45"></div>
@@ -31,7 +31,7 @@ import { RoomEnvironment } from 'three/addons/RoomEnvironment.js';
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
 
 // ============================================================ 形（名前・色・つぶれ方）
-const SHAPES = { haniwa: { name: '埴輪', color: 0xe38a60, blush: true } };
+const SHAPES = { haniwa: { name: '埴輪', color: 0xf29aa8, blush: true } };
 let shapeKey = 'haniwa';
 // 踊る埴輪のかたち: 丸いカプセルを、なめらかにつなげたもの（中心から見て、外側へ向かう距離を測る）
 const sdCap = (p, a, b, r) => { const pax = p.x - a.x, pay = p.y - a.y, paz = p.z - a.z, bax = b.x - a.x, bay = b.y - a.y, baz = b.z - a.z; const h = Math.max(0, Math.min(1, (pax * bax + pay * bay + paz * baz) / (bax * bax + bay * bay + baz * baz || 1e-9))); return Math.hypot(pax - bax * h, pay - bay * h, paz - baz * h) - r; };
@@ -45,7 +45,7 @@ const PARTS = [   // [はじ1, はじ2, はんけい]
 const haniwaSDF = (p) => { let d = 1e9; for (const [a, b, r] of PARTS) d = smin(d, sdCap(p, a, b, r), 0.18); return d; };
 const HEAD_C = V3(0, 0.65, 0), ORIGIN = V3(0, 0.2, 0);
 function haniwaRadius(dir) { let t = 0, step = 0.02; while (t < 3 && haniwaSDF(V3(ORIGIN.x + dir.x * t, ORIGIN.y + dir.y * t, ORIGIN.z + dir.z * t)) < 0) t += step; let lo = t - step, hi = t; for (let k = 0; k < 8; k++) { const m = (lo + hi) / 2; if (haniwaSDF(V3(ORIGIN.x + dir.x * m, ORIGIN.y + dir.y * m, ORIGIN.z + dir.z * m)) < 0) lo = m; else hi = m; } return (lo + hi) / 2; }
-SHAPES.haniwa.make = (p) => { const t = haniwaRadius(p); return V3(ORIGIN.x + p.x * t, ORIGIN.y + p.y * t, ORIGIN.z + p.z * t); };
+SHAPES.haniwa.make = (p) => V3(p.x, p.y, p.z);   // まんまるの球
 $('shapes').style.display = 'none';
 
 // ============================================================ three.js の準備
@@ -59,9 +59,9 @@ const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer); scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.6;
 const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 50);
 const cam = { yaw: 0, pitch: 0.07, dist: 7.6 };
-const player = { x: 0, z: 0, vx: 0, vz: 0, face: 0 };
+const player = { jy: 0, x: 0, z: 0, vx: 0, vz: 0, face: 0 };
 function placeCamera() {
-  const asp = innerWidth / innerHeight, d = cam.dist * (asp < 0.9 ? 1.38 : 1), tx = player.x, ty = 1.55, tz = player.z, cp = Math.cos(cam.pitch);
+  const asp = innerWidth / innerHeight, d = cam.dist * (asp < 0.9 ? 1.38 : 1), tx = player.x, ty = 1.0 + player.jy * 0.8, tz = player.z, cp = Math.cos(cam.pitch);
   camera.position.set(tx + Math.sin(cam.yaw) * cp * d, ty + Math.sin(cam.pitch) * d, tz + Math.cos(cam.yaw) * cp * d); camera.lookAt(tx, ty, tz); camera.aspect = asp; camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
 }
 placeCamera();
@@ -90,7 +90,7 @@ function buildBody(key) {
   let minY = 1e9; const rv = [];
   for (let i = 0; i < N; i++) { const v = sh.make(new THREE.Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])); rv.push(v); minY = Math.min(minY, v.y); }
   for (let i = 0; i < N; i++) { R[i * 3] = rv[i].x; R[i * 3 + 1] = rv[i].y; R[i * 3 + 2] = rv[i].z; }
-  footY = -1.52; legIdx = []; LO = new Float32Array(N * 3);
+  footY = -1.0; legIdx = []; LO = new Float32Array(N * 3);
   X = new Float32Array(R); XP = new Float32Array(R); faces = new Uint32Array(idx);
   const eset = new Set(), el = []; neighbors = Array.from({ length: N }, () => []);
   for (let f = 0; f < faces.length; f += 3) for (let k = 0; k < 3; k++) { const a = faces[f + k], b = faces[f + (k + 1) % 3], key2 = a < b ? a * 1e6 + b : b * 1e6 + a; if (!eset.has(key2)) { eset.add(key2); el.push(a, b); neighbors[a].push(b); neighbors[b].push(a); } }
@@ -100,9 +100,6 @@ function buildBody(key) {
   V0 = volume(); Atot = area();
   mesh = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: sh.color, roughness: 0.42, metalness: 0, sheen: 1, sheenColor: new THREE.Color(0xffffff), sheenRoughness: 0.4, clearcoat: 0.25, clearcoatRoughness: 0.35, envMapIntensity: 1 }));
   mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false; group.add(mesh);
-  addFace(sh);
-  for (const l of legs) group.remove(l);
-  legs = [-1, 1].map((sd) => { const piv = new THREE.Group(); piv.position.set(sd * 0.28, -0.92, 0); const m = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.2, 8, 16), mesh.material); m.position.y = -0.3; piv.add(m); group.add(piv); return piv; });
 }
 function volume() { let v = 0; for (let f = 0; f < faces.length; f += 3) { const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3; v += (X[a] * (X[b + 1] * X[c + 2] - X[b + 2] * X[c + 1]) - X[a + 1] * (X[b] * X[c + 2] - X[b + 2] * X[c]) + X[a + 2] * (X[b] * X[c + 1] - X[b + 1] * X[c])) / 6; } return v; }
 function area() { let s = 0; for (let f = 0; f < faces.length; f += 3) { const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3; const ux = X[b] - X[a], uy = X[b + 1] - X[a + 1], uz = X[b + 2] - X[a + 2], vx = X[c] - X[a], vy = X[c + 1] - X[a + 1], vz = X[c + 2] - X[a + 2]; s += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx); } return s; }
@@ -128,7 +125,7 @@ function setNdc(e) { const r = renderer.domElement.getBoundingClientRect(); ndc.
 function press(nx, ny) {
   group.updateMatrixWorld(true); ndc.set(nx, ny); ray.setFromCamera(ndc, camera); geo.computeBoundingSphere();
   const hit = ray.intersectObject(mesh, false)[0]; if (!hit) return false;
-  finger.on = true; finger.hold = 0; finger.depth = 0; finger.d0 = hit.distance - finger.r;   /* 指の先が、表面にちょうど触れる位置（中心は、表面の手前） */ finger.sx = nx; finger.sy = ny; offPress.copy(off); ovel.add(localDir(ray.ray.direction).multiplyScalar(2.2)); ovel.y += 0.4; return true;
+  finger.on = true; finger.hold = 0; finger.depth = 0; finger.d0 = hit.distance - finger.r;   /* 指の先が、表面にちょうど触れる位置（中心は、表面の手前） */ finger.sx = nx; finger.sy = ny; offPress.copy(off); ovel.add(localDir(ray.ray.direction).multiplyScalar(2.2)); ovel.y += 0.4; jump(); return true;
 }
 let drag = null;
 renderer.domElement.addEventListener('pointerdown', (e) => { ensureAudio(); setNdc(e); renderer.domElement.setPointerCapture(e.pointerId); if (press(ndc.x, ndc.y)) sndPress(); else drag = { x: e.clientX, y: e.clientY }; });
@@ -210,6 +207,8 @@ buildBody(shapeKey);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); placeCamera(); });
 if (Q.has('soft')) { $('soft').value = Q.get('soft'); settings(); }
 let last = performance.now();
+const jmp = { y: 0, vy: 0, sq: 0, sqv: 0 };
+function jump() { jmp.vy = Math.max(jmp.vy, 0) * 0.3 + 11; jmp.sqv -= 2.5; }   // タップで、ぽーんと高く飛ぶ
 const keys = {};
 addEventListener('keydown', (e) => { keys[e.code] = true; if (/^(KeyW|KeyA|KeyS|KeyD|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Space)$/.test(e.code)) e.preventDefault(); });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -223,10 +222,15 @@ function updatePlayer(dt) {
   const spd = Math.hypot(player.vx, player.vz);
   if (spd > 0.3) { const tgt = Math.atan2(player.vx, player.vz); let dd = tgt - player.face; dd = Math.atan2(Math.sin(dd), Math.cos(dd)); player.face += dd * (1 - Math.exp(-12 * dt)); }
   walkAmt += ((spd > 0.3 ? 1 : 0) - walkAmt) * (1 - Math.exp(-10 * dt)); walkPhase += spd * dt * 2.6;
-  group.position.set(player.x, -footY + Math.abs(Math.sin(walkPhase)) * 0.07 * walkAmt, player.z); group.rotation.set(-0.1 * Math.min(1, spd / 3.6), player.face, 0);
-  blob.position.x = player.x; blob.position.z = player.z; grid.position.set(Math.round(player.x), 0, Math.round(player.z));
-  legs.forEach((l, k) => { const ph = walkPhase + (k ? 0 : Math.PI); l.rotation.x = Math.sin(ph) * 0.75 * walkAmt; l.position.y = -0.92 + Math.max(0, Math.cos(ph)) * 0.0; });
-  placeCamera(); group.updateMatrixWorld(true);
+  // 上下のはずみ（重力・着地で、数回はねる・つぶれる）
+  jmp.vy -= 26 * dt; jmp.y += jmp.vy * dt;
+  if (jmp.y < 0) { jmp.y = 0; if (jmp.vy < -1.5) { const hit = -jmp.vy; jmp.sqv -= hit * 0.35; jmp.vy = hit * 0.62; } else jmp.vy = 0; }
+  jmp.sqv += (-jmp.sq * 160 - jmp.sqv * 9) * dt; jmp.sq += jmp.sqv * dt;
+  const st = Math.max(-0.45, Math.min(0.35, jmp.sq * 0.3 + (jmp.y > 0.02 ? Math.abs(jmp.vy) * 0.012 : 0)));   // 空中は、たてに伸びる
+  group.scale.set(1 - st * 0.5, 1 + st, 1 - st * 0.5);
+  group.position.set(player.x, -footY * group.scale.y + jmp.y, player.z); group.rotation.set(0, player.face, 0);
+  blob.position.x = player.x; blob.position.z = player.z; blob.scale.setScalar(Math.max(0.5, 1.2 - jmp.y * 0.12)); blob.material.opacity = Math.max(0.35, 1 - jmp.y * 0.15); grid.position.set(Math.round(player.x), 0, Math.round(player.z));
+  player.jy = jmp.y; placeCamera(); group.updateMatrixWorld(true);
 }
 function frame(now) { const dt = Math.min(0.033, (now - last) / 1000); last = now; updatePlayer(dt); step(dt); renderer.render(scene, camera); requestAnimationFrame(frame); }
 window.__step = step; window.__press = press; window.__release = release;
@@ -236,8 +240,8 @@ if (Q.get('manual') === '1') {
     const nx = parseFloat(Q.get('nx') || '0'), ny = parseFloat(Q.get('ny') || '0.1'), hold = parseFloat(Q.get('hold') || '0'), after = parseFloat(Q.get('after') || '0');
     updatePlayer(1 / 60); for (let i = 0; i < 30; i++) step(1 / 60);
     if (Q.get("walk")) { keys.KeyW = true; keys.KeyD = true; for (let i = 0; i < parseFloat(Q.get("walk")) * 60; i++) { updatePlayer(1 / 60); step(1 / 60); } }
-    let pr = false; if (hold > 0) { pr = press(nx, ny); document.documentElement.setAttribute('data-press', String(pr) + ' d0=' + finger.d0.toFixed(2)); if (pr) { for (let i = 0; i < hold * 60; i++) step(1 / 60); } }
-    if (after > 0) { finger.on = false; for (let i = 0; i < after * 60; i++) step(1 / 60); }
+    let pr = false; if (hold > 0) { pr = press(nx, ny); document.documentElement.setAttribute('data-press', String(pr) + ' d0=' + finger.d0.toFixed(2)); if (pr) { for (let i = 0; i < hold * 60; i++) { updatePlayer(1 / 60); step(1 / 60); } } }
+    if (after > 0) { finger.on = false; for (let i = 0; i < after * 60; i++) { updatePlayer(1 / 60); step(1 / 60); } }
     step(0.0001); renderer.render(scene, camera);
     const img = new Image(); img.src = renderer.domElement.toDataURL('image/png'); img.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%'; document.body.appendChild(img);
     let mx = 0, my = 0, bad = 0; for (let i = 0; i < N; i++) { mx = Math.max(mx, Math.hypot(X[i * 3], X[i * 3 + 2])); my = Math.max(my, X[i * 3 + 1]); if (!isFinite(X[i * 3])) bad++; }
