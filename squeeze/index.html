@@ -17,7 +17,7 @@
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
 </head>
 <body>
-<div id="hint">押してみてください。ぽよんと、ゆっくり戻ります</div>
+<div id="hint">WASD で歩く（Shift でダッシュ）／ドラッグか矢印キーで視点／さわると、ぷにっ</div>
 <div id="hud">
   <div class="row"><div class="lab"><span>戻るはやさ</span><b id="sv">ゆっくり</b></div><input type="range" id="soft" min="0" max="100" value="25"></div>
   <div class="row"><div class="lab"><span>やわらかさ</span><b id="fv">ふつう</b></div><input type="range" id="firm" min="0" max="100" value="45"></div>
@@ -38,7 +38,7 @@ const sdCap = (p, a, b, r) => { const pax = p.x - a.x, pay = p.y - a.y, paz = p.
 const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const PARTS = [   // [はじ1, はじ2, はんけい]
-  [V3(0, -1.0, 0), V3(0, 0.75, 0), 0.58],          // 指サックのような、細長いどう（上がまるい）
+  [V3(0, -0.6, 0), V3(0, 0.75, 0), 0.58],          // 指サックのような、細長いどう（上がまるい）
   [V3(0.5, 0.1, 0), V3(0.78, 0.4, 0), 0.17],       // 右手: ちょこんと
   [V3(-0.5, 0.1, 0), V3(-0.78, 0.2, 0), 0.17],     // 左手: ちょこんと
 ];
@@ -58,18 +58,28 @@ const scene = new THREE.Scene();
 { const c = document.createElement('canvas'); c.width = 4; c.height = 256; const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#fbe8ee'); gr.addColorStop(1, '#f1ddd0'); g.fillStyle = gr; g.fillRect(0, 0, 4, 256); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t; }
 const pmrem = new THREE.PMREMGenerator(renderer); scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.6;
 const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 50);
-function placeCamera() { const asp = innerWidth / innerHeight; camera.position.set(0, 0.6, asp < 0.9 ? 10.5 : 7.6); camera.lookAt(0, 0.1, 0); camera.aspect = asp; camera.updateProjectionMatrix(); camera.updateMatrixWorld(true); }
+const cam = { yaw: 0, pitch: 0.07, dist: 7.6 };
+const player = { x: 0, z: 0, vx: 0, vz: 0, face: 0 };
+function placeCamera() {
+  const asp = innerWidth / innerHeight, d = cam.dist * (asp < 0.9 ? 1.38 : 1), tx = player.x, ty = 1.55, tz = player.z, cp = Math.cos(cam.pitch);
+  camera.position.set(tx + Math.sin(cam.yaw) * cp * d, ty + Math.sin(cam.pitch) * d, tz + Math.cos(cam.yaw) * cp * d); camera.lookAt(tx, ty, tz); camera.aspect = asp; camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+}
 placeCamera();
 const sun = new THREE.DirectionalLight(0xfff2e6, 2.2); sun.position.set(-2.5, 5, 3.5); sun.castShadow = false; sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: 1, far: 14 }); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.02; scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xffeef2, 0xe9d4c8, 0.6));
 
+const grid = new THREE.GridHelper(60, 60, 0xd9a99a, 0xd9a99a); grid.material.transparent = true; grid.material.opacity = 0.2; grid.material.depthWrite = false; scene.add(grid);
+const blob = new THREE.Mesh(new THREE.CircleGeometry(0.9, 32), new THREE.MeshBasicMaterial({ map: (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(120,70,60,0.35)'); gr.addColorStop(1, 'rgba(120,70,60,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })(), transparent: true, depthWrite: false })); blob.rotation.x = -Math.PI / 2; blob.position.y = 0.01; scene.add(blob);
+scene.fog = new THREE.Fog(0xf6e4e4, 9, 26);
+
 // ============================================================ やわらかい体（頂点ごとに動く、位置ベースの簡易ソフトボディ）
+const group = new THREE.Group(); group.rotation.order = 'YXZ'; scene.add(group);
 let body = null, N = 0, mesh, geo, R, X, XP, edges, restLen, faces, neighbors, normals, V0 = 0, Atot = 1, faceParts = [], bodyKey;
-const floorY = 0.0;
+let footY = 0, legIdx = [], LO = null, legs = [];
 function buildBody(key) {
   bodyKey = key; shapeKey = key; for (const b of $('shapes').children) b.classList.toggle('sel', b.dataset.k === key);
-  if (mesh) { scene.remove(mesh); geo.dispose(); }
-  for (const f of faceParts) scene.remove(f.obj); faceParts = [];
+  if (mesh) { group.remove(mesh); geo.dispose(); }
+  for (const f of faceParts) group.remove(f.obj); faceParts = [];
   // 球を作って、同じ位置の頂点をまとめる（つなぎ目で裂けないように）
   const base = new THREE.IcosahedronGeometry(1, 5).toNonIndexed(), pa = base.attributes.position, map = new Map(), pos = [], idx = [];
   for (let i = 0; i < pa.count; i++) {
@@ -80,6 +90,7 @@ function buildBody(key) {
   let minY = 1e9; const rv = [];
   for (let i = 0; i < N; i++) { const v = sh.make(new THREE.Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])); rv.push(v); minY = Math.min(minY, v.y); }
   for (let i = 0; i < N; i++) { R[i * 3] = rv[i].x; R[i * 3 + 1] = rv[i].y; R[i * 3 + 2] = rv[i].z; }
+  footY = -1.52; legIdx = []; LO = new Float32Array(N * 3);
   X = new Float32Array(R); XP = new Float32Array(R); faces = new Uint32Array(idx);
   const eset = new Set(), el = []; neighbors = Array.from({ length: N }, () => []);
   for (let f = 0; f < faces.length; f += 3) for (let k = 0; k < 3; k++) { const a = faces[f + k], b = faces[f + (k + 1) % 3], key2 = a < b ? a * 1e6 + b : b * 1e6 + a; if (!eset.has(key2)) { eset.add(key2); el.push(a, b); neighbors[a].push(b); neighbors[b].push(a); } }
@@ -88,15 +99,17 @@ function buildBody(key) {
   geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(X, 3)); geo.setIndex(new THREE.BufferAttribute(faces, 1)); geo.computeVertexNormals(); normals = geo.attributes.normal.array;
   V0 = volume(); Atot = area();
   mesh = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: sh.color, roughness: 0.42, metalness: 0, sheen: 1, sheenColor: new THREE.Color(0xffffff), sheenRoughness: 0.4, clearcoat: 0.25, clearcoatRoughness: 0.35, envMapIntensity: 1 }));
-  mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false; scene.add(mesh);
+  mesh.castShadow = false; mesh.receiveShadow = false; mesh.frustumCulled = false; group.add(mesh);
   addFace(sh);
+  for (const l of legs) group.remove(l);
+  legs = [-1, 1].map((sd) => { const piv = new THREE.Group(); piv.position.set(sd * 0.28, -0.92, 0); const m = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.2, 8, 16), mesh.material); m.position.y = -0.3; piv.add(m); group.add(piv); return piv; });
 }
 function volume() { let v = 0; for (let f = 0; f < faces.length; f += 3) { const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3; v += (X[a] * (X[b + 1] * X[c + 2] - X[b + 2] * X[c + 1]) - X[a + 1] * (X[b] * X[c + 2] - X[b + 2] * X[c]) + X[a + 2] * (X[b] * X[c + 1] - X[b + 1] * X[c])) / 6; } return v; }
 function area() { let s = 0; for (let f = 0; f < faces.length; f += 3) { const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3; const ux = X[b] - X[a], uy = X[b + 1] - X[a + 1], uz = X[b + 2] - X[a + 2], vx = X[c] - X[a], vy = X[c + 1] - X[a + 1], vz = X[c + 2] - X[a + 2]; s += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx); } return s; }
 // 顔: 近くの頂点にくっつけて、体といっしょに動かす
 function nearest(dir) { let best = 0, bd = -2; for (let i = 0; i < N; i++) { const x = R[i * 3] - HEAD_C.x, y = R[i * 3 + 1] - HEAD_C.y, z = R[i * 3 + 2] - HEAD_C.z, l = Math.hypot(x, y, z) || 1, d = (x * dir.x + y * dir.y + z * dir.z) / l; if (d > bd) { bd = d; best = i; } } return best; }
 function addFace(sh) {
-  const mk = (geom, mat, dir, push, scale) => { const i = nearest(dir.clone().normalize()), o = new THREE.Mesh(geom, mat); if (scale) o.scale.copy(scale); scene.add(o); faceParts.push({ obj: o, i, push }); };
+  const mk = (geom, mat, dir, push, scale) => { const i = nearest(dir.clone().normalize()), o = new THREE.Mesh(geom, mat); if (scale) o.scale.copy(scale); group.add(o); faceParts.push({ obj: o, i, push }); };
   const black = new THREE.MeshStandardMaterial({ color: 0x2a1c1a, roughness: 0.3 });
   mk(new THREE.SphereGeometry(0.09, 20, 14), black, new THREE.Vector3(-0.38, 0.2, 1), 0.01, new THREE.Vector3(1, 1, 0.5));   // 埴輪の、まるい目
   mk(new THREE.SphereGeometry(0.09, 20, 14), black, new THREE.Vector3(0.38, 0.2, 1), 0.01, new THREE.Vector3(1, 1, 0.5));
@@ -108,16 +121,19 @@ function addFace(sh) {
 const finger = { on: false, c: new THREE.Vector3(), r: 0.42, depth: 0, hold: 0, anchor: new THREE.Vector3(), d0: 3, sx: 0, sy: 0, vis: null };
 const fingerVis = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshStandardMaterial({ color: 0xf2b8a6, roughness: 0.6, transparent: true, opacity: 0.0 })); fingerVis.visible = false; scene.add(fingerVis);
 const off = new THREE.Vector3(), ovel = new THREE.Vector3(), offPress = new THREE.Vector3();   // 本体ぜんたいの、ずれと速さ（押すと、少し飛んでいく）
+const _q = new THREE.Quaternion(), _v = new THREE.Vector3();
+const localDir = (d) => _v.copy(d).applyQuaternion(_q.copy(group.quaternion).invert()).clone();
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 function setNdc(e) { const r = renderer.domElement.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); }
 function press(nx, ny) {
-  ndc.set(nx, ny); ray.setFromCamera(ndc, camera); geo.computeBoundingSphere();
+  group.updateMatrixWorld(true); ndc.set(nx, ny); ray.setFromCamera(ndc, camera); geo.computeBoundingSphere();
   const hit = ray.intersectObject(mesh, false)[0]; if (!hit) return false;
-  finger.on = true; finger.hold = 0; finger.depth = 0; finger.d0 = hit.distance - finger.r;   /* 指の先が、表面にちょうど触れる位置（中心は、表面の手前） */ finger.sx = nx; finger.sy = ny; offPress.copy(off); ovel.addScaledVector(ray.ray.direction, 2.2); ovel.y += 0.4; return true;
+  finger.on = true; finger.hold = 0; finger.depth = 0; finger.d0 = hit.distance - finger.r;   /* 指の先が、表面にちょうど触れる位置（中心は、表面の手前） */ finger.sx = nx; finger.sy = ny; offPress.copy(off); ovel.add(localDir(ray.ray.direction).multiplyScalar(2.2)); ovel.y += 0.4; return true;
 }
-renderer.domElement.addEventListener('pointerdown', (e) => { ensureAudio(); setNdc(e); const r = renderer.domElement.getBoundingClientRect(); if (press(ndc.x, ndc.y)) { renderer.domElement.setPointerCapture(e.pointerId); sndPress(); } });
-renderer.domElement.addEventListener('pointermove', (e) => { if (!finger.on) return; setNdc(e); finger.sx = ndc.x; finger.sy = ndc.y; });
-const release = () => { if (finger.on) { sndRelease(); ovel.addScaledVector(ray.ray.direction, 1.6); } finger.on = false; };
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { ensureAudio(); setNdc(e); renderer.domElement.setPointerCapture(e.pointerId); if (press(ndc.x, ndc.y)) sndPress(); else drag = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointermove', (e) => { if (drag) { cam.yaw -= (e.clientX - drag.x) * 0.006; cam.pitch = Math.max(-0.2, Math.min(1.1, cam.pitch + (e.clientY - drag.y) * 0.004)); drag.x = e.clientX; drag.y = e.clientY; return; } if (!finger.on) return; setNdc(e); finger.sx = ndc.x; finger.sy = ndc.y; });
+const release = () => { drag = null; if (finger.on) { sndRelease(); ovel.add(localDir(ray.ray.direction).multiplyScalar(1.6)); } finger.on = false; };
 renderer.domElement.addEventListener('pointerup', release); renderer.domElement.addEventListener('pointercancel', release);
 
 // ============================================================ 1 コマの計算
@@ -130,13 +146,14 @@ function settings() {
   $('sv').textContent = s < 0.25 ? 'ゆっくり' : s < 0.6 ? 'ふつう' : 'はやい'; $('fv').textContent = f < 0.3 ? 'ふわふわ' : f < 0.65 ? 'ふつう' : 'かため';
 }
 $('soft').oninput = settings; $('firm').oninput = settings; settings();
+const ZV = new THREE.Vector3(0, 0, 1), nv = new THREE.Vector3();
 let defNow = 0, lastDef = 0;
 function sub(dt) {
   // 指の位置: 画面の位置の延長上で、押している時間に応じて、奥へ
   if (finger.on) {
     finger.hold += dt; finger.depth = Math.min(0.55, finger.hold * 0.8);
     ndc.set(finger.sx, finger.sy); ray.setFromCamera(ndc, camera);
-    finger.c.copy(ray.ray.origin).addScaledVector(ray.ray.direction, finger.d0 + finger.depth).add(off).sub(offPress);
+    finger.c.copy(ray.ray.origin).addScaledVector(ray.ray.direction, finger.d0 + finger.depth); group.worldToLocal(finger.c); finger.c.add(off).sub(offPress);
     fingerVis.visible = true; fingerVis.position.copy(finger.c); fingerVis.scale.setScalar(finger.r); fingerVis.material.opacity = 0.0;
   } else fingerVis.visible = false;
   // 本体ぜんたいが、ふわっと飛んで、ばねで戻ってくる
@@ -145,7 +162,7 @@ function sub(dt) {
   // ベルレ積分
   for (let i = 0; i < N * 3; i++) { const x = X[i], v = (x - XP[i]) * P.damp; XP[i] = x; X[i] = x + v; }
   // 元の形へ、ゆっくり戻る力
-  for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) { const o = k === 0 ? off.x : k === 1 ? off.y : off.z; X[i * 3 + k] += (R[i * 3 + k] + o - X[i * 3 + k]) * P.rest; }
+  for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) { const o = k === 0 ? off.x : k === 1 ? off.y : off.z; X[i * 3 + k] += (R[i * 3 + k] + o + LO[i * 3 + k] - X[i * 3 + k]) * P.rest; }
   for (let it = 0; it < 3; it++) {
     // 辺の長さを保つ（つながった頂点が、まとまって動く）
     for (let e = 0; e < restLen.length; e++) {
@@ -158,11 +175,21 @@ function sub(dt) {
     if (finger.on) for (let i = 0; i < N; i++) { const dx = X[i * 3] - finger.c.x, dy = X[i * 3 + 1] - finger.c.y, dz = X[i * 3 + 2] - finger.c.z, d = Math.hypot(dx, dy, dz); if (d < finger.r && d > 1e-6) { const k = finger.r / d; X[i * 3] = finger.c.x + dx * k; X[i * 3 + 1] = finger.c.y + dy * k; X[i * 3 + 2] = finger.c.z + dz * k; } }
   }
 }
+let walkPhase = 0, walkAmt = 0;
+function animateLegs() {
+  for (let k = 0; k < legIdx.length; k += 3) {
+    const i = legIdx[k], w = legIdx[k + 1], side = legIdx[k + 2], ph = walkPhase + (side > 0 ? 0 : Math.PI);
+    const ny = walkAmt * Math.max(0, Math.sin(ph)) * 0.22 * w, nz = walkAmt * Math.cos(ph) * 0.3 * w;
+    const dy = ny - LO[i * 3 + 1], dz = nz - LO[i * 3 + 2]; LO[i * 3 + 1] = ny; LO[i * 3 + 2] = nz;
+    X[i * 3 + 1] += dy; XP[i * 3 + 1] += dy; X[i * 3 + 2] += dz; XP[i * 3 + 2] += dz;
+  }
+}
 function step(dt) {
+  animateLegs();
   const n = 2; for (let s = 0; s < n; s++) sub(dt / n);
   geo.attributes.position.needsUpdate = true; geo.computeVertexNormals(); normals = geo.attributes.normal.array;
   // 顔を、体の動きについて行かせる
-  for (const f of faceParts) { const i = f.i; f.obj.position.set(X[i * 3] + (SHAPES[bodyKey] ? 0 : 0) + normals[i * 3] * f.push + 0, X[i * 3 + 1] + normals[i * 3 + 1] * f.push, X[i * 3 + 2] + normals[i * 3 + 2] * f.push); f.obj.position.x += (R[i * 3] * 0) ; f.obj.lookAt(f.obj.position.x + normals[i * 3], f.obj.position.y + normals[i * 3 + 1], f.obj.position.z + normals[i * 3 + 2]); if (f.obj.geometry.type === 'TorusGeometry') f.obj.rotateZ(Math.PI); }
+  for (const f of faceParts) { const i = f.i; f.obj.position.set(X[i * 3] + normals[i * 3] * f.push, X[i * 3 + 1] + normals[i * 3 + 1] * f.push, X[i * 3 + 2] + normals[i * 3 + 2] * f.push); f.obj.quaternion.setFromUnitVectors(ZV, nv.set(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]).normalize()); }
   // へこみ具合（音と表示に使う）
   let d = 0; for (let i = 0; i < N; i++) d += Math.abs(X[i * 3 + 1] - R[i * 3 + 1]) + Math.abs(X[i * 3] - R[i * 3]) * 0.5; defNow = d / N; lastDef = defNow;
   updateAudio();
@@ -183,13 +210,32 @@ buildBody(shapeKey);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); placeCamera(); });
 if (Q.has('soft')) { $('soft').value = Q.get('soft'); settings(); }
 let last = performance.now();
-function frame(now) { const dt = Math.min(0.033, (now - last) / 1000); last = now; step(dt); renderer.render(scene, camera); requestAnimationFrame(frame); }
+const keys = {};
+addEventListener('keydown', (e) => { keys[e.code] = true; if (/^(KeyW|KeyA|KeyS|KeyD|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Space)$/.test(e.code)) e.preventDefault(); });
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+function updatePlayer(dt) {
+  let ix = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), iz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+  cam.yaw += ((keys.ArrowLeft ? -1 : 0) + (keys.ArrowRight ? 1 : 0)) * 1.8 * dt; cam.pitch = Math.max(-0.2, Math.min(1.1, cam.pitch + ((keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)) * 1.2 * dt));
+  const l = Math.hypot(ix, iz) || 1; ix /= l; iz /= l;
+  const sp = keys.ShiftLeft ? 6.5 : 3.6, fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw), rx = Math.cos(cam.yaw), rz = -Math.sin(cam.yaw);
+  const tvx = (fx * iz + rx * ix) * sp, tvz = (fz * iz + rz * ix) * sp, a = 1 - Math.exp(-10 * dt);
+  player.vx += (tvx - player.vx) * a; player.vz += (tvz - player.vz) * a; player.x += player.vx * dt; player.z += player.vz * dt;
+  const spd = Math.hypot(player.vx, player.vz);
+  if (spd > 0.3) { const tgt = Math.atan2(player.vx, player.vz); let dd = tgt - player.face; dd = Math.atan2(Math.sin(dd), Math.cos(dd)); player.face += dd * (1 - Math.exp(-12 * dt)); }
+  walkAmt += ((spd > 0.3 ? 1 : 0) - walkAmt) * (1 - Math.exp(-10 * dt)); walkPhase += spd * dt * 2.6;
+  group.position.set(player.x, -footY + Math.abs(Math.sin(walkPhase)) * 0.07 * walkAmt, player.z); group.rotation.set(-0.1 * Math.min(1, spd / 3.6), player.face, 0);
+  blob.position.x = player.x; blob.position.z = player.z; grid.position.set(Math.round(player.x), 0, Math.round(player.z));
+  legs.forEach((l, k) => { const ph = walkPhase + (k ? 0 : Math.PI); l.rotation.x = Math.sin(ph) * 0.75 * walkAmt; l.position.y = -0.92 + Math.max(0, Math.cos(ph)) * 0.0; });
+  placeCamera(); group.updateMatrixWorld(true);
+}
+function frame(now) { const dt = Math.min(0.033, (now - last) / 1000); last = now; updatePlayer(dt); step(dt); renderer.render(scene, camera); requestAnimationFrame(frame); }
 window.__step = step; window.__press = press; window.__release = release;
 if (Q.get('manual') === '1') {
   // 確認用: 指定の位置を、指定の秒数だけ押してから、離して、指定の秒数すすめる。結果を画像にして重ねる（ヘッドレスの画面取得では WebGL が写らないため）
   setTimeout(() => {
     const nx = parseFloat(Q.get('nx') || '0'), ny = parseFloat(Q.get('ny') || '0.1'), hold = parseFloat(Q.get('hold') || '0'), after = parseFloat(Q.get('after') || '0');
-    for (let i = 0; i < 30; i++) step(1 / 60);
+    updatePlayer(1 / 60); for (let i = 0; i < 30; i++) step(1 / 60);
+    if (Q.get("walk")) { keys.KeyW = true; keys.KeyD = true; for (let i = 0; i < parseFloat(Q.get("walk")) * 60; i++) { updatePlayer(1 / 60); step(1 / 60); } }
     let pr = false; if (hold > 0) { pr = press(nx, ny); document.documentElement.setAttribute('data-press', String(pr) + ' d0=' + finger.d0.toFixed(2)); if (pr) { for (let i = 0; i < hold * 60; i++) step(1 / 60); } }
     if (after > 0) { finger.on = false; for (let i = 0; i < after * 60; i++) step(1 / 60); }
     step(0.0001); renderer.render(scene, camera);
