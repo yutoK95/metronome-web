@@ -7,7 +7,7 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #f4e9e4; font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; color: #5a4038; }
   canvas { display: block; touch-action: none; }
-  #hud { position: fixed; left: 14px; bottom: 14px; width: 270px; padding: 12px 14px; border-radius: 16px; background: rgba(255, 250, 247, 0.82); backdrop-filter: blur(6px); box-shadow: 0 4px 18px rgba(120, 70, 60, 0.18); font-size: 13px; user-select: none; }
+  #hud { display: none; position: fixed; left: 14px; bottom: 14px; width: 270px; padding: 12px 14px; border-radius: 16px; background: rgba(255, 250, 247, 0.82); backdrop-filter: blur(6px); box-shadow: 0 4px 18px rgba(120, 70, 60, 0.18); font-size: 13px; user-select: none; }
   #hud .row { margin: 9px 0; } #hud .lab { display: flex; justify-content: space-between; margin-bottom: 3px; opacity: .85; }
   #hud input[type=range] { width: 100%; accent-color: #e58aa6; }
   #hud button { font: inherit; color: #5a4038; background: #fbe1e6; border: 1px solid #efb7c4; border-radius: 10px; padding: 6px 10px; cursor: pointer; margin: 0 4px 4px 0; }
@@ -17,7 +17,7 @@
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
 </head>
 <body>
-<div id="hint">つまんだり、押したりしてみてください。離すと、ゆっくり戻ります</div>
+<div id="hint">押してみてください。ぽよんと、ゆっくり戻ります</div>
 <div id="hud">
   <div class="row"><div class="lab"><span>戻るはやさ</span><b id="sv">ゆっくり</b></div><input type="range" id="soft" min="0" max="100" value="25"></div>
   <div class="row"><div class="lab"><span>やわらかさ</span><b id="fv">ふつう</b></div><input type="range" id="firm" min="0" max="100" value="45"></div>
@@ -107,16 +107,17 @@ function addFace(sh) {
 // ============================================================ 指（押す丸い先）
 const finger = { on: false, c: new THREE.Vector3(), r: 0.42, depth: 0, hold: 0, anchor: new THREE.Vector3(), d0: 3, sx: 0, sy: 0, vis: null };
 const fingerVis = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshStandardMaterial({ color: 0xf2b8a6, roughness: 0.6, transparent: true, opacity: 0.0 })); fingerVis.visible = false; scene.add(fingerVis);
+const off = new THREE.Vector3(), ovel = new THREE.Vector3(), offPress = new THREE.Vector3();   // 本体ぜんたいの、ずれと速さ（押すと、少し飛んでいく）
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 function setNdc(e) { const r = renderer.domElement.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); }
 function press(nx, ny) {
   ndc.set(nx, ny); ray.setFromCamera(ndc, camera); geo.computeBoundingSphere();
   const hit = ray.intersectObject(mesh, false)[0]; if (!hit) return false;
-  finger.on = true; finger.hold = 0; finger.depth = 0; finger.d0 = hit.distance - finger.r;   /* 指の先が、表面にちょうど触れる位置（中心は、表面の手前） */ finger.sx = nx; finger.sy = ny; return true;
+  finger.on = true; finger.hold = 0; finger.depth = 0; finger.d0 = hit.distance - finger.r;   /* 指の先が、表面にちょうど触れる位置（中心は、表面の手前） */ finger.sx = nx; finger.sy = ny; offPress.copy(off); ovel.addScaledVector(ray.ray.direction, 2.2); ovel.y += 0.4; return true;
 }
 renderer.domElement.addEventListener('pointerdown', (e) => { ensureAudio(); setNdc(e); const r = renderer.domElement.getBoundingClientRect(); if (press(ndc.x, ndc.y)) { renderer.domElement.setPointerCapture(e.pointerId); sndPress(); } });
 renderer.domElement.addEventListener('pointermove', (e) => { if (!finger.on) return; setNdc(e); finger.sx = ndc.x; finger.sy = ndc.y; });
-const release = () => { if (finger.on) { sndRelease(); } finger.on = false; };
+const release = () => { if (finger.on) { sndRelease(); ovel.addScaledVector(ray.ray.direction, 1.6); } finger.on = false; };
 renderer.domElement.addEventListener('pointerup', release); renderer.domElement.addEventListener('pointercancel', release);
 
 // ============================================================ 1 コマの計算
@@ -135,13 +136,16 @@ function sub(dt) {
   if (finger.on) {
     finger.hold += dt; finger.depth = Math.min(0.55, finger.hold * 0.8);
     ndc.set(finger.sx, finger.sy); ray.setFromCamera(ndc, camera);
-    finger.c.copy(ray.ray.origin).addScaledVector(ray.ray.direction, finger.d0 + finger.depth);
+    finger.c.copy(ray.ray.origin).addScaledVector(ray.ray.direction, finger.d0 + finger.depth).add(off).sub(offPress);
     fingerVis.visible = true; fingerVis.position.copy(finger.c); fingerVis.scale.setScalar(finger.r); fingerVis.material.opacity = 0.0;
   } else fingerVis.visible = false;
+  // 本体ぜんたいが、ふわっと飛んで、ばねで戻ってくる
+  ovel.addScaledVector(off, -14 * dt); ovel.multiplyScalar(Math.exp(-3.2 * dt));
+  { const dx = ovel.x * dt, dy = ovel.y * dt, dz = ovel.z * dt; off.x += dx; off.y += dy; off.z += dz; for (let i = 0; i < N; i++) { X[i * 3] += dx; X[i * 3 + 1] += dy; X[i * 3 + 2] += dz; XP[i * 3] += dx; XP[i * 3 + 1] += dy; XP[i * 3 + 2] += dz; } }
   // ベルレ積分
   for (let i = 0; i < N * 3; i++) { const x = X[i], v = (x - XP[i]) * P.damp; XP[i] = x; X[i] = x + v; }
   // 元の形へ、ゆっくり戻る力
-  for (let i = 0; i < N * 3; i++) X[i] += (R[i] - X[i]) * P.rest;
+  for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) { const o = k === 0 ? off.x : k === 1 ? off.y : off.z; X[i * 3 + k] += (R[i * 3 + k] + o - X[i * 3 + k]) * P.rest; }
   for (let it = 0; it < 3; it++) {
     // 辺の長さを保つ（つながった頂点が、まとまって動く）
     for (let e = 0; e < restLen.length; e++) {
