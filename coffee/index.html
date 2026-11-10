@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coffee Pour / コーヒーを注ぐ（three.js 試作）</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1410; font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; color: #f1e6da; }
+  canvas { display: block; touch-action: none; }
+  #hud { position: fixed; left: 14px; bottom: 14px; padding: 12px 14px; border-radius: 14px; background: rgba(24, 16, 10, 0.72); backdrop-filter: blur(6px); width: 290px; font-size: 13px; user-select: none; }
+  #hud h1 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+  #hud .row { margin: 8px 0; }
+  #hud .lab { display: flex; justify-content: space-between; opacity: .85; margin-bottom: 3px; }
+  #hud input[type=range] { width: 100%; accent-color: #d2905a; }
+  #hud .bar { height: 8px; background: rgba(255,255,255,.12); border-radius: 4px; overflow: hidden; }
+  #hud .bar i { display: block; height: 100%; background: #8a5a34; width: 0; }
+  #hud button { font: inherit; color: inherit; background: #4a3220; border: 1px solid #7a5638; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  #hud button:hover { background: #5a3d28; }
+  #hint { position: fixed; right: 14px; top: 12px; font-size: 12px; opacity: .75; text-align: right; line-height: 1.6; pointer-events: none; }
+  #err { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 24px; font-size: 15px; }
+</style>
+<script>addEventListener('error', (e) => { document.documentElement.setAttribute('data-err', (e.message || '') + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno); }); addEventListener('unhandledrejection', (e) => document.documentElement.setAttribute('data-err', 'rej ' + e.reason));</script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
+</head>
+<body>
+<div id="hud">
+  <h1>☕ コーヒーを注ぐ</h1>
+  <div class="row"><div class="lab"><span>傾き ＝ 注ぐ勢い</span><b id="tv">0%</b></div><input type="range" id="tilt" min="0" max="100" value="0"></div>
+  <div class="row"><div class="lab"><span>サーバーの残り</span><b id="sv">100%</b></div><div class="bar"><i id="sb"></i></div></div>
+  <div class="row"><div class="lab"><span>カップ</span><b id="cv">0%</b></div><div class="bar"><i id="cb"></i></div></div>
+  <div class="row"><button id="refill">サーバーを満たす</button> <button id="empty">カップを空にする</button></div>
+</div>
+<div id="hint">サーバーをドラッグして移動<br>ホイール / スライダー / ↑↓ キーで傾ける<br>少し傾けると、ゆっくり。大きく傾けると、勢いよく注げます</div>
+<div id="err"></div>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/RoomEnvironment.js';
+
+const Q = new URLSearchParams(location.search);
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- 定数（長さは 10cm = 1）
+const G = 98;                              // 重力
+const SRV = { ri: 0.6, yb: 0.1, H: 1.5, lipX: 0.62, lipY: 1.78, vmax: 0 };   // サーバー: 内側の半径・底・高さ・注ぎ口の位置
+SRV.vmax = Math.PI * SRV.ri * SRV.ri * SRV.H;
+const CUP = { x: 1.15, z: 0, rb: 0.3, rt: 0.45, h: 0.82, y0: 0.1, vmax: 0 };  // カップ（内側の寸法）
+CUP.vmax = Math.PI * CUP.h * (CUP.rb * CUP.rb + CUP.rb * CUP.rt + CUP.rt * CUP.rt) / 3;
+const radiusAt = (hh) => CUP.rb + (CUP.rt - CUP.rb) * (hh / CUP.h);
+const levelFromV = (V) => {                // 円錐台の体積から、水位を求める（二分法）
+  let lo = 0, hi = CUP.h;
+  for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2, r = radiusAt(m), v = Math.PI * m * (CUP.rb * CUP.rb + CUP.rb * r + r * r) / 3; if (v < V) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+};
+
+// ---------------------------------------------------------------- 状態
+const S = { px: -1.25, pz: 0, tilt: 0, tiltT: Q.has('tilt') ? parseFloat(Q.get('tilt')) : 0, V: SRV.vmax * 0.92, cupV: 0, spillV: 0, Q: 0, hit: null, puddle: { x: 0, z: 0, a: 0 }, t: 0 };
+if (Q.has('px')) S.px = parseFloat(Q.get('px'));
+const TILT_MAX = 1.85;                     // 約 106°
+
+// ---------------------------------------------------------------- three.js の準備
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+} catch (e) { const el = $('err'); el.style.display = 'grid'; el.textContent = 'WebGL が使えない環境です。'; throw e; }
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.localClippingEnabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2a2018);
+scene.fog = new THREE.Fog(0x2a2018, 9, 18);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 60);
+const camTarget = new THREE.Vector3(0.0, 0.7, 0);
+function placeCamera() {
+  const asp = innerWidth / innerHeight, dist = asp < 1.2 ? 8.4 : 6.2;
+  camera.position.set(0.1, 3.7, dist); camera.lookAt(camTarget); camera.aspect = asp; camera.updateProjectionMatrix();
+}
+placeCamera();
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); placeCamera(); });
+
+const sun = new THREE.DirectionalLight(0xfff0dc, 2.4);
+sun.position.set(-3.5, 6.5, 4.5); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); sun.shadow.camera.left = -5; sun.shadow.camera.right = 5; sun.shadow.camera.top = 5; sun.shadow.camera.bottom = -3; sun.shadow.camera.near = 1; sun.shadow.camera.far = 20;
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xffeedd, 0x403028, 0.35));
+
+// ---------------------------------------------------------------- テーブル
+function woodTexture() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512; const g = c.getContext('2d');
+  g.fillStyle = '#8a5a34'; g.fillRect(0, 0, 1024, 512);
+  for (let i = 0; i < 90; i++) {
+    const y = Math.random() * 512, h = 2 + Math.random() * 10; g.fillStyle = `rgba(${40 + Math.random() * 40},${20 + Math.random() * 20},10,${0.05 + Math.random() * 0.12})`;
+    g.beginPath(); g.moveTo(0, y); for (let x = 0; x <= 1024; x += 64) g.lineTo(x, y + Math.sin(x * 0.01 + i) * 4 + (Math.random() - 0.5) * 2); g.lineTo(1024, y + h); g.lineTo(0, y + h); g.fill();
+  }
+  for (let k = 1; k < 4; k++) { g.fillStyle = 'rgba(30,15,5,0.35)'; g.fillRect(0, k * 128 - 1, 1024, 2); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+const tableMat = new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.55, metalness: 0 });
+const table = new THREE.Mesh(new THREE.BoxGeometry(9, 0.4, 5), tableMat);
+table.position.set(0, -0.2, 0.2); table.receiveShadow = true; scene.add(table);
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(30, 14), new THREE.MeshStandardMaterial({ color: 0x4a3a2e, roughness: 0.95 }));
+wall.position.set(0, 5, -3.2); wall.receiveShadow = true; scene.add(wall);
+
+// ---------------------------------------------------------------- コーヒーの材質
+const coffeeMat = new THREE.MeshPhysicalMaterial({ color: 0x2a1407, emissive: 0x100702, roughness: 0.3, metalness: 0, clearcoat: 0.2, clearcoatRoughness: 0.3, envMapIntensity: 0.1, side: THREE.DoubleSide });
+const streamMat = new THREE.MeshPhysicalMaterial({ color: 0x331a09, emissive: 0x120803, roughness: 0.2, clearcoat: 0.3, envMapIntensity: 0.2, transparent: true, opacity: 0.96 });
+const puddleMat = new THREE.MeshStandardMaterial({ color: 0x2c1608, roughness: 0.55, metalness: 0, envMapIntensity: 0.03, transparent: true, opacity: 0.9 });
+
+// 新しい three.js では、scene.environment を使う材質は envMapIntensity が効かないので、明示的に環境マップを渡す
+for (const m of [coffeeMat, streamMat, puddleMat]) m.envMap = scene.environment;
+// ガラスの反射が強すぎて白く濁るので、少し弱める（glassMat は下で作るので、あとで設定）
+
+// ---------------------------------------------------------------- カップとソーサー
+const cupGroup = new THREE.Group(); cupGroup.position.set(CUP.x, 0, CUP.z); scene.add(cupGroup);
+const ceramic = new THREE.MeshPhysicalMaterial({ color: 0xf4efe6, roughness: 0.25, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+{
+  const saucer = new THREE.Mesh(new THREE.LatheGeometry([[0, 0.0], [0.6, 0.0], [0.82, 0.07], [0.86, 0.09], [0.84, 0.095], [0.6, 0.05], [0.0, 0.06]].map(([x, y]) => new THREE.Vector2(x, y)), 64), ceramic);
+  saucer.castShadow = saucer.receiveShadow = true; cupGroup.add(saucer);
+  const prof = [[0.0, 0.06], [0.25, 0.06], [0.3, 0.1], [0.4, 0.4], [0.46, 0.72], [0.485, 0.92], [0.46, 0.92], [0.43, 0.72], [0.37, 0.4], [0.3, 0.12], [0.0, 0.1]];
+  const cup = new THREE.Mesh(new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 64), new THREE.MeshPhysicalMaterial({ color: 0xf4efe6, roughness: 0.22, clearcoat: 0.9, clearcoatRoughness: 0.12, side: THREE.DoubleSide }));
+  cup.castShadow = cup.receiveShadow = true; cupGroup.add(cup);
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.045, 14, 32, Math.PI * 1.25), ceramic);
+  handle.position.set(0.5, 0.58, 0); handle.rotation.z = -Math.PI * 0.62; handle.castShadow = true; cupGroup.add(handle);
+}
+// カップの中のコーヒー（水位に合わせて作り直す）
+const cupCoffee = new THREE.Mesh(new THREE.BufferGeometry(), coffeeMat); cupCoffee.position.y = CUP.y0; cupCoffee.visible = false; cupGroup.add(cupCoffee);
+const cupSurface = new THREE.Mesh(new THREE.CircleGeometry(1, 48), coffeeMat); cupSurface.rotation.x = -Math.PI / 2; cupSurface.visible = false; cupGroup.add(cupSurface);
+let cupRipple = 0;
+function updateCupCoffee() {
+  const lv = levelFromV(Math.min(S.cupV, CUP.vmax));
+  if (S.cupV < 1e-4) { cupCoffee.visible = false; cupSurface.visible = false; return; }
+  const r = radiusAt(lv);
+  const geo = new THREE.CylinderGeometry(r - 0.005, CUP.rb - 0.015, lv, 48, 1, true); geo.translate(0, lv / 2, 0);
+  cupCoffee.geometry.dispose(); cupCoffee.geometry = geo; cupCoffee.visible = true;
+  cupSurface.position.y = CUP.y0 + lv + 0.001; cupSurface.scale.set(r - 0.005, r - 0.005, 1); cupSurface.visible = true;
+}
+
+// ---------------------------------------------------------------- コーヒーサーバー
+const srv = new THREE.Group(); scene.add(srv);                   // 注ぎ口を支点にして傾ける
+const glassMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.04, metalness: 0, transmission: 0.96, thickness: 0.12, ior: 1.5, transparent: true, side: THREE.DoubleSide, envMapIntensity: 1.4 });
+glassMat.envMap = scene.environment; glassMat.envMapIntensity = 0.45; glassMat.transmission = 1; glassMat.roughness = 0.02;
+const plastic = new THREE.MeshStandardMaterial({ color: 0x15110e, roughness: 0.45, metalness: 0.1 });
+const carafe = new THREE.Group(); srv.add(carafe); carafe.position.set(-SRV.lipX, -SRV.lipY, 0);   // 軸が x = 0 の座標で作り、注ぎ口が原点に来るようにずらす
+{
+  const outer = [[0, 0.0], [0.58, 0.0], [0.67, 0.06], [0.72, 0.4], [0.7, 0.8], [0.62, 1.2], [0.48, 1.52], [0.42, 1.68], [0.46, 1.78], [0.5, 1.8], [0.47, 1.8], [0.42, 1.76], [0.38, 1.66], [0.44, 1.5], [0.58, 1.2], [0.66, 0.8], [0.68, 0.4], [0.62, 0.12], [0.5, 0.08], [0, 0.08]];
+  const glass = new THREE.Mesh(new THREE.LatheGeometry(outer.map(([x, y]) => new THREE.Vector2(x, y)), 64), glassMat); glass.castShadow = true; carafe.add(glass);
+  // 中のコーヒー: 内側の形で、水面（世界座標の水平面）より下だけを描く
+  const inner = [[0, 0.1], [0.55, 0.1], [0.6, 0.14], [0.66, 0.4], [0.64, 0.8], [0.57, 1.2], [0.44, 1.52], [0.4, 1.66]];
+  const liquid = new THREE.Mesh(new THREE.LatheGeometry(inner.map(([x, y]) => new THREE.Vector2(x, y)), 64), coffeeMat);
+  liquid.userData.isLiquid = true; carafe.add(liquid); S.liquid = liquid;
+  const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0); coffeeMat.clippingPlanes = [clip]; S.clip = clip;
+  // 液面（楕円）
+  const cap = new THREE.Mesh(new THREE.CircleGeometry(1, 48), coffeeMat); cap.rotation.x = -Math.PI / 2; S.cap = cap; scene.add(cap);
+  // 黒いふちと底、持ち手、注ぎ口
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.035, 12, 48), plastic); rim.rotation.x = Math.PI / 2; rim.position.y = 1.8; carafe.add(rim);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.66, 0.1, 48), plastic); base.position.y = 0.04; base.castShadow = true; carafe.add(base);
+  const hdl = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 12, 40, Math.PI), plastic); hdl.position.set(-0.7, 0.95, 0); hdl.rotation.z = Math.PI / 2; hdl.castShadow = true; carafe.add(hdl);
+  const lip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.2, 24, 1, true), glassMat); lip.rotation.z = -Math.PI / 2; lip.position.set(SRV.lipX - 0.05, 1.78, 0); carafe.add(lip);
+}
+
+// ---------------------------------------------------------------- サーバーの水面の高さ（傾けても、体積が同じになるように）
+const _v = new THREE.Vector3();
+function liquidSurface() {
+  // 底の中心の世界座標と、軸の向き
+  srv.updateMatrixWorld(true);
+  const B = _v.set(0, SRV.yb, 0).applyMatrix4(carafe.matrixWorld).clone();
+  const th = S.tilt, st = Math.sin(th), ct = Math.cos(th), ri = SRV.ri;
+  const n = 28, ds = SRV.H / n;
+  const vol = (h) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) {
+      const yc = B.y + (i + 0.5) * ds * ct, half = ri * st;
+      let u; if (half < 1e-4) u = (h - yc) > 0 ? 1 : -1; else u = Math.max(-1, Math.min(1, (h - yc) / half));
+      v += ri * ri * (Math.PI / 2 + Math.asin(u) + u * Math.sqrt(1 - u * u)) * ds;
+    }
+    return v;
+  };
+  let lo = B.y - 0.01, hi = B.y + SRV.H * ct + ri * st + 0.01;
+  for (let i = 0; i < 26; i++) { const m = (lo + hi) / 2; if (vol(m) < S.V) lo = m; else hi = m; }
+  return { h: (lo + hi) / 2, B };
+}
+
+// ---------------------------------------------------------------- 注ぎ口から出る流れ
+const streamMesh = new THREE.Mesh(new THREE.BufferGeometry(), streamMat); streamMesh.castShadow = false; streamMesh.frustumCulled = false; scene.add(streamMesh);
+const puddle = new THREE.Mesh(new THREE.CircleGeometry(1, 48), puddleMat); puddle.rotation.x = -Math.PI / 2; puddle.position.y = 0.004; puddle.visible = false; puddle.receiveShadow = true; scene.add(puddle);
+const ripple = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), new THREE.MeshBasicMaterial({ color: 0xc89a6a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })); ripple.rotation.x = -Math.PI / 2; ripple.visible = false; scene.add(ripple);
+
+// しぶき（粒）
+const NP = 600, pPos = new Float32Array(NP * 3), pVel = new Float32Array(NP * 3), pLife = new Float32Array(NP);
+for (let i = 0; i < NP; i++) pPos[i * 3 + 1] = -10;
+const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const drops = new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0x4a2a14, size: 0.05, sizeAttenuation: true, transparent: true, opacity: 0.95 })); drops.frustumCulled = false; scene.add(drops);
+let pCursor = 0;
+function splash(x, y, z, n, power) {
+  for (let k = 0; k < n; k++) {
+    const i = pCursor++ % NP, a = Math.random() * Math.PI * 2, sp = (0.3 + Math.random()) * power;
+    pPos[i * 3] = x + Math.cos(a) * 0.03; pPos[i * 3 + 1] = y; pPos[i * 3 + 2] = z + Math.sin(a) * 0.03;
+    pVel[i * 3] = Math.cos(a) * sp; pVel[i * 3 + 1] = (0.8 + Math.random() * 1.6) * power * 2.2; pVel[i * 3 + 2] = Math.sin(a) * sp; pLife[i] = 0.5 + Math.random() * 0.4;
+  }
+}
+
+// ---------------------------------------------------------------- 音（最初の操作のあとで鳴る）
+let actx = null, noise, nFilter, nGain, nSrc;
+function ensureAudio() {
+  if (actx) { if (actx.state !== 'running') actx.resume(); return; }
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate), d = buf.getChannelData(0); let last = 0;
+    for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; last = last * 0.6 + w * 0.4; d[i] = last; }
+    nSrc = actx.createBufferSource(); nSrc.buffer = buf; nSrc.loop = true;
+    nFilter = actx.createBiquadFilter(); nFilter.type = 'bandpass'; nFilter.Q.value = 0.9; nFilter.frequency.value = 900;
+    nGain = actx.createGain(); nGain.gain.value = 0;
+    nSrc.connect(nFilter).connect(nGain).connect(actx.destination); nSrc.start();
+  } catch (e) { actx = null; }
+}
+function updateAudio() {
+  if (!actx || actx.state !== 'running') return;
+  const t = actx.currentTime, q = Math.min(1, S.Q / 0.25), fill = Math.min(1, S.cupV / CUP.vmax);
+  const inCup = S.hit && S.hit.inCup;
+  // 注いでいるあいだ: 流れの勢いで音量、カップが満ちるほど音が高くなる（共鳴）
+  nGain.gain.setTargetAtTime(S.Q > 1e-4 ? 0.05 + 0.4 * Math.sqrt(q) : 0, t, 0.05);
+  nFilter.frequency.setTargetAtTime((inCup ? 500 + 1400 * fill : 1800) + 900 * q, t, 0.08);
+}
+
+// ---------------------------------------------------------------- 操作
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitP = new THREE.Vector3();
+let dragging = false, dragOff = new THREE.Vector2();
+function setMouse(e) { const r = renderer.domElement.getBoundingClientRect(); mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(mouse, camera); }
+function onServer() { const hits = ray.intersectObject(srv, true); return hits.length > 0; }
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  ensureAudio(); setMouse(e);
+  if (onServer()) { dragging = true; renderer.domElement.setPointerCapture(e.pointerId); ray.ray.intersectPlane(plane, hitP); dragOff.set(S.px - hitP.x, S.pz - hitP.z); renderer.domElement.style.cursor = 'grabbing'; }
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  setMouse(e);
+  if (dragging) { if (ray.ray.intersectPlane(plane, hitP)) { S.px = THREE.MathUtils.clamp(hitP.x + dragOff.x, -3.4, 3.4); S.pz = THREE.MathUtils.clamp(hitP.z + dragOff.y, -1.2, 1.6); } }
+  else renderer.domElement.style.cursor = onServer() ? 'grab' : 'default';
+});
+const endDrag = () => { dragging = false; renderer.domElement.style.cursor = 'default'; };
+renderer.domElement.addEventListener('pointerup', endDrag); renderer.domElement.addEventListener('pointercancel', endDrag);
+renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); ensureAudio(); S.tiltT = THREE.MathUtils.clamp(S.tiltT - Math.sign(e.deltaY) * 0.06 * (e.ctrlKey ? 0.4 : 1), 0, TILT_MAX); syncSlider(); }, { passive: false });
+addEventListener('keydown', (e) => { if (e.code === 'ArrowUp') { S.tiltT = Math.min(TILT_MAX, S.tiltT + 0.05); syncSlider(); } else if (e.code === 'ArrowDown') { S.tiltT = Math.max(0, S.tiltT - 0.05); syncSlider(); } });
+$('tilt').addEventListener('input', (e) => { ensureAudio(); S.tiltT = (+e.target.value / 100) * TILT_MAX; });
+function syncSlider() { $('tilt').value = Math.round((S.tiltT / TILT_MAX) * 100); }
+$('refill').onclick = () => { S.V = SRV.vmax * 0.92; };
+$('empty').onclick = () => { S.cupV = 0; S.spillV = 0; S.puddle.a = 0; puddle.visible = false; };
+syncSlider();
+
+// ---------------------------------------------------------------- 1 コマ進める
+const tmpPts = [];
+function step(dt) {
+  S.t += dt;
+  // 傾き（なめらかに追従）
+  S.tilt += (S.tiltT - S.tilt) * Math.min(1, dt * 7);
+  srv.position.set(S.px + SRV.lipX, SRV.lipY + 0.0, S.pz);
+  srv.rotation.z = -S.tilt;
+  // 傾けると、底が持ち上がる。注ぎ口を支点にするので、台に食い込まない
+  srv.updateMatrixWorld(true);
+
+  // 水面の高さと、注ぎ口からの深さ
+  const { h } = liquidSurface();
+  const depth = h - srv.position.y;
+  let q = 0;
+  if (depth > 0 && S.V > 1e-5) q = Math.min(S.V / Math.max(dt, 1e-3), 0.35 * Math.pow(depth, 0.75));
+  S.Q = q;
+  S.V = Math.max(0, S.V - q * dt);
+
+  // 水面（サーバー）の見た目
+  S.clip.constant = h;                                 // y < h だけを描く（法線 (0,-1,0) / 面: -y + c >= 0）
+  S.liquid.visible = S.V > 1e-4;
+  S.cap.visible = S.V > 1e-4 && S.tilt < 0.6;
+  if (S.cap.visible) {
+    const ax = _v.set(0, 1, 0).transformDirection(carafe.matrixWorld);   // 軸（世界）
+    const B = new THREE.Vector3(0, SRV.yb, 0).applyMatrix4(carafe.matrixWorld);
+    const s = (h - B.y) / Math.max(ax.y, 1e-3);                          // 水面が軸と交わる、底からの距離
+    const c = B.clone().addScaledVector(ax, s);
+    const rr = SRV.ri * (0.97 - 0.18 * Math.max(0, (s - 1.0)) / 0.6 * 0);
+    const wallR = [[0.1, 0.55], [0.14, 0.6], [0.4, 0.66], [0.8, 0.64], [1.2, 0.57], [1.52, 0.44], [1.66, 0.4]];
+    let r0 = 0.4; for (let i = 0; i < wallR.length - 1; i++) { const [y0, r_0] = wallR[i], [y1, r_1] = wallR[i + 1], yy = s + SRV.yb; if (yy >= y0 && yy <= y1) r0 = r_0 + (r_1 - r_0) * (yy - y0) / (y1 - y0); }
+    S.cap.position.set(c.x, h, c.z); S.cap.scale.set(r0 * 0.99, r0 * 0.99, 1);
+  }
+
+  // 流れ
+  const lip = new THREE.Vector3(0, 0, 0).applyMatrix4(srv.matrixWorld);
+  let inCup = false, hit = null;
+  if (q > 1e-4) {
+    const v0 = 0.45 + 6.2 * Math.sqrt(q), r0 = 0.014 + 0.085 * Math.sqrt(q / 0.25);
+    const cupLevelY = CUP.y0 + levelFromV(Math.min(S.cupV, CUP.vmax));
+    // 放物線をたどって、カップの水面（またはカップの縁・テーブル）に当たる場所を探す
+    let tHit = 0, hx = 0, hy = 0, hz = 0, found = false;
+    let inside = false;
+    for (let t = 0.002; t < 2.0 && !found; t += 0.004) {
+      const x = lip.x + v0 * t, y = lip.y - 0.5 * G * t * t, z = lip.z;
+      const dx = x - CUP.x, dz = z - CUP.z, rad = Math.hypot(dx, dz), yy = y - CUP.y0, inRange = yy >= 0 && yy <= CUP.h;
+      const rw = radiusAt(Math.max(0, Math.min(CUP.h, yy))), full = S.cupV >= CUP.vmax - 1e-6;
+      if (inRange && rad < rw - 0.02) inside = true;
+      else if (inside && inRange && !full) { tHit = t; hx = x; hy = Math.max(y, cupLevelY); hz = z; inCup = true; found = true; break; }   // カップの内側の壁に当たって、中へ流れ込む
+      if (inside && !full && y <= cupLevelY + 0.0005) { tHit = t; hx = x; hy = cupLevelY; hz = z; inCup = true; found = true; break; }   // 水面に当たる
+      if (full && rad < 0.49 && yy <= CUP.h && yy > 0) { tHit = t; hx = x; hy = CUP.y0 + CUP.h; hz = z; found = true; break; }          // 満杯: 縁に当たって、あふれる
+      if (y <= 0.005) { tHit = t; hx = x; hy = 0.005; hz = z; found = true; break; }
+    }
+    if (!found) { tHit = 2.0; hx = lip.x + v0 * 2; hy = 0; hz = lip.z; }
+    // 流れの形（放物線 + 勢いが強いときの乱れ）
+    const N = 28, pts = [], radii = [];
+    for (let i = 0; i <= N; i++) {
+      const t = (i / N) * tHit, vx = v0, vy = -G * t;
+      let x = lip.x + vx * t, y = lip.y - 0.5 * G * t * t, z = lip.z;
+      const turb = Math.min(1, q / 0.25) * 0.012 * (i / N);
+      x += Math.sin(S.t * 38 + i * 0.9) * turb; z += Math.cos(S.t * 31 + i * 1.3) * turb;
+      pts.push(new THREE.Vector3(x, Math.max(y, hy), z));
+      radii.push(r0 * Math.sqrt(v0 / Math.hypot(vx, vy)) * (0.75 + 0.25 * (1 - i / N)) + 0.004);
+    }
+    // TubeGeometry は太さが一定なので、自前で太さが変わる管を作る
+    const seg = 10, pos = [], idx = [];
+    for (let i = 0; i <= N; i++) {
+      const p = pts[i], tan = (i < N ? pts[i + 1].clone().sub(p) : p.clone().sub(pts[i - 1])).normalize();
+      const nrm = new THREE.Vector3().crossVectors(tan, new THREE.Vector3(0, 0, 1)); if (nrm.lengthSq() < 1e-6) nrm.set(1, 0, 0); nrm.normalize();
+      const bin = new THREE.Vector3().crossVectors(tan, nrm).normalize();
+      for (let j = 0; j < seg; j++) { const a = (j / seg) * Math.PI * 2; pos.push(p.x + (nrm.x * Math.cos(a) + bin.x * Math.sin(a)) * radii[i], p.y + (nrm.y * Math.cos(a) + bin.y * Math.sin(a)) * radii[i], p.z + (nrm.z * Math.cos(a) + bin.z * Math.sin(a)) * radii[i]); }
+    }
+    for (let i = 0; i < N; i++) for (let j = 0; j < seg; j++) { const a = i * seg + j, b = i * seg + (j + 1) % seg, c = (i + 1) * seg + j, d = (i + 1) * seg + (j + 1) % seg; idx.push(a, c, b, b, c, d); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    streamMesh.geometry.dispose(); streamMesh.geometry = g; streamMesh.visible = true;
+    hit = { x: hx, y: hy, z: hz, inCup };
+    // 当たった場所での、水量の移動としぶき
+    const dv = q * dt;
+    if (inCup) {
+      S.cupV += dv; cupRipple = Math.min(1, cupRipple + q * 3 + 0.05);
+      if (S.cupV > CUP.vmax) { const ex = S.cupV - CUP.vmax; S.cupV = CUP.vmax; addSpill(ex, CUP.x + 0.5, CUP.z); }
+    } else if (hy <= 0.01) addSpill(dv, hx, hz);
+    else addSpill(dv, CUP.x + Math.sign(hx - CUP.x || 1) * 0.5, hz);   // 満杯のカップの縁に当たって、あふれる
+    const n = Math.floor(q * 400 * dt + Math.random()), power = 0.25 + Math.min(1, q / 0.25) * 0.9;
+    if (n > 0) splash(hx, hy, hz, Math.min(10, n), power * (inCup ? 0.7 : 1));
+  } else streamMesh.visible = false;
+  S.hit = hit;
+
+  // 水たまり（テーブルにこぼれた分）
+  const pa = S.puddle;
+  if (pa.a > 0.001) { puddle.visible = true; puddle.position.set(pa.x, 0.004, pa.z); const r = Math.sqrt(pa.a / Math.PI); puddle.scale.set(r * 1.15, r * 0.9, 1); }
+  // カップの中
+  updateCupCoffee();
+  if (hit && hit.inCup) { ripple.visible = true; }
+  cupRipple = Math.max(0, cupRipple - dt * 1.6);
+  if (S.cupV > 1e-4) {
+    const lv = levelFromV(Math.min(S.cupV, CUP.vmax)), rr = radiusAt(lv);
+    ripple.position.set(CUP.x + (hit && hit.inCup ? hit.x - CUP.x : 0), CUP.y0 + lv + 0.003, CUP.z + (hit && hit.inCup ? hit.z - CUP.z : 0));
+    const k = (S.t * 1.8) % 1; ripple.scale.set(0.05 + 0.3 * k, 0.05 + 0.3 * k, 1); ripple.material.opacity = (hit && hit.inCup ? 0.45 : cupRipple * 0.5) * (1 - k);
+    ripple.visible = (hit && hit.inCup) || cupRipple > 0.02;
+  } else ripple.visible = false;
+
+  // しぶき
+  for (let i = 0; i < NP; i++) {
+    if (pLife[i] <= 0) { pPos[i * 3 + 1] = -10; continue; }
+    pLife[i] -= dt; pVel[i * 3 + 1] -= G * 0.5 * dt;
+    pPos[i * 3] += pVel[i * 3] * dt; pPos[i * 3 + 1] += pVel[i * 3 + 1] * dt; pPos[i * 3 + 2] += pVel[i * 3 + 2] * dt;
+    if (pPos[i * 3 + 1] < 0.004) pLife[i] = 0;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+
+  // 表示
+  $('tv').textContent = Math.round((S.tilt / TILT_MAX) * 100) + '%';
+  $('sv').textContent = Math.round((S.V / SRV.vmax) * 100) + '%'; $('sb').style.width = Math.round((S.V / SRV.vmax) * 100) + '%';
+  $('cv').textContent = Math.round((S.cupV / CUP.vmax) * 100) + '%'; $('cb').style.width = Math.round((S.cupV / CUP.vmax) * 100) + '%';
+  updateAudio();
+}
+function addSpill(v, x, z) {
+  const pa = S.puddle;
+  if (pa.a < 0.0005) { pa.x = x; pa.z = z; }
+  else { const w = Math.min(1, v * 8); pa.x += (x - pa.x) * w * 0.3; pa.z += (z - pa.z) * w * 0.3; }
+  pa.a = Math.min(7, pa.a + v * 6);   // 体積 → 面積（薄く広がる）
+}
+
+// ---------------------------------------------------------------- メインループ
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  step(dt); renderer.render(scene, camera); requestAnimationFrame(frame);
+}
+if (Q.has('ff')) { const sec = parseFloat(Q.get('ff')); for (let i = 0; i < sec * 60; i++) step(1 / 60); }
+window.__step = step; window.__render = () => renderer.render(scene, camera); window.__S = S;
+if (Q.get('manual') === '1') {
+  // 確認用: 1 回だけ描いて、結果を画像にして重ねる（ヘッドレスの画面取得で WebGL が写らないため）
+  step(0.0001); renderer.render(scene, camera);
+  const img = new Image(); img.src = renderer.domElement.toDataURL('image/png'); img.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none'; document.body.appendChild(img);
+  window.__ready = true;
+} else requestAnimationFrame(frame);
+</script>
+</body>
+</html>
