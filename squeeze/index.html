@@ -38,16 +38,12 @@ const sdCap = (p, a, b, r) => { const pax = p.x - a.x, pay = p.y - a.y, paz = p.
 const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const PARTS = [   // [はじ1, はじ2, はんけい]
-  [V3(0, -0.95, 0), V3(0, 0.0, 0), 0.6],           // どう（下が少し広い）
-  [V3(0, -0.95, 0), V3(0, -0.8, 0), 0.68],
-  [V3(0, 0.95, 0), V3(0, 0.95, 0), 0.6],           // あたま
-  [V3(0.5, 0.15, 0), V3(0.95, 0.6, 0), 0.31],       // 右うで: 上へ
-  [V3(0.95, 0.6, 0), V3(1.0, 1.05, 0), 0.29],
-  [V3(-0.5, 0.15, 0), V3(-0.95, 0.1, 0), 0.31],     // 左うで: 横から上へ（おどっている）
-  [V3(-0.95, 0.1, 0), V3(-1.1, 0.55, 0), 0.29],
+  [V3(0, -1.0, 0), V3(0, 0.75, 0), 0.58],          // 指サックのような、細長いどう（上がまるい）
+  [V3(0.5, 0.1, 0), V3(0.78, 0.4, 0), 0.17],       // 右手: ちょこんと
+  [V3(-0.5, 0.1, 0), V3(-0.78, 0.2, 0), 0.17],     // 左手: ちょこんと
 ];
-const haniwaSDF = (p) => { let d = 1e9; for (const [a, b, r] of PARTS) d = smin(d, sdCap(p, a, b, r), 0.3); return d; };
-const HEAD_C = V3(0, 0.95, 0), ORIGIN = V3(0, 0.2, 0);
+const haniwaSDF = (p) => { let d = 1e9; for (const [a, b, r] of PARTS) d = smin(d, sdCap(p, a, b, r), 0.18); return d; };
+const HEAD_C = V3(0, 0.65, 0), ORIGIN = V3(0, 0.2, 0);
 function haniwaRadius(dir) { let t = 0, step = 0.02; while (t < 3 && haniwaSDF(V3(ORIGIN.x + dir.x * t, ORIGIN.y + dir.y * t, ORIGIN.z + dir.z * t)) < 0) t += step; let lo = t - step, hi = t; for (let k = 0; k < 8; k++) { const m = (lo + hi) / 2; if (haniwaSDF(V3(ORIGIN.x + dir.x * m, ORIGIN.y + dir.y * m, ORIGIN.z + dir.z * m)) < 0) lo = m; else hi = m; } return (lo + hi) / 2; }
 SHAPES.haniwa.make = (p) => { const t = haniwaRadius(p); return V3(ORIGIN.x + p.x * t, ORIGIN.y + p.y * t, ORIGIN.z + p.z * t); };
 $('shapes').style.display = 'none';
