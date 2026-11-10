@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>埴輪としずく（three.js + p5.js 試作）</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1a14; font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; color: #eef3e8; }
+  canvas { position: fixed; left: 0; top: 0; }
+  #three { z-index: 0; } .p5Canvas { z-index: 2; pointer-events: none; }
+  #count { position: fixed; top: 14px; left: 0; right: 0; text-align: center; font-size: 22px; font-weight: 700; letter-spacing: 2px; text-shadow: 0 2px 10px rgba(0,0,0,.6); pointer-events: none; z-index: 3; }
+  #hud { position: fixed; left: 14px; bottom: 14px; width: 260px; padding: 12px 14px; border-radius: 14px; background: rgba(12, 22, 16, 0.72); backdrop-filter: blur(6px); font-size: 13px; user-select: none; z-index: 4; }
+  #hud .row { margin: 8px 0; } #hud .lab { display: flex; justify-content: space-between; opacity: .85; margin-bottom: 3px; }
+  #hud input[type=range] { width: 100%; accent-color: #e58aa6; }
+  #hud button { font: inherit; color: inherit; background: #2f4a38; border: 1px solid #55785f; border-radius: 8px; padding: 6px 12px; cursor: pointer; margin-right: 6px; }
+  #hud button:hover { background: #3b5c46; }
+</style>
+<script src="./vendor/p5.min.js"></script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="count"></div>
+<div id="hud">
+  <div class="row"><div class="lab"><span>テンポ（BPM）</span><b id="bv">60</b></div><input type="range" id="bpm" min="20" max="180" value="60"></div>
+  <div class="row"><div class="lab"><span>花が咲くまでの水の数</span><b id="nv">12</b></div><input type="range" id="need" min="3" max="40" value="12"></div>
+  <div class="row"><button id="reset">最初から</button><button id="snd">🔊 音 ON</button></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+
+const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
+if (Q.get('ui') === '0') $('hud').style.display = 'none';
+
+// ======================================================= 状態（three.js と p5.js の両方から読む）
+let bpm = Q.has('bpm') ? +Q.get('bpm') : 60, need = Q.has('need') ? +Q.get('need') : 12, soundOn = Q.get('sound') !== '0';
+$('bpm').value = bpm; $('need').value = need; $('bv').textContent = bpm; $('nv').textContent = need;
+const sim = { t: 0, count: 0, drops: [], parts: [], sparks: [], nextLand: 0, wobble: 0, wobbleV: 0, wet: 0, ripple: 0, soft: 0, bloomT: -1, butterflies: [], nextButterflyAt: 0, chunks: [], lastThud: -9 };
+const HEAD_Y = 3.34;                                   // 頭頂（埴輪の局所座標）
+const kY = () => 1 - 0.58 * Math.pow(sim.soft, 1.25);  // 崩れると、縦につぶれる
+
+// ======================================================= three.js
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false }); } catch (e) { document.body.insertAdjacentHTML('beforeend', '<p style="padding:30px">WebGL が使えない環境です。</p>'); throw e; }
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1)); renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.domElement.id = 'three'; document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+{ // 空のグラデーション
+  const c = document.createElement('canvas'); c.width = 4; c.height = 256; const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#8fbfd4'); gr.addColorStop(0.55, '#e4eed8'); gr.addColorStop(1, '#f0e6c4'); g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t;
+}
+scene.fog = new THREE.Fog(0xdde9d6, 14, 38);
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 80);
+const camLook = new THREE.Vector3(0, 2.45, 0);
+function placeCamera() { const asp = innerWidth / innerHeight, dist = asp < 0.9 ? 15 : asp < 1.4 ? 11.5 : 10; camera.position.set(0.0, 2.9, dist); camera.lookAt(camLook); camera.aspect = asp; camera.updateProjectionMatrix(); camera.updateMatrixWorld(true); }
+placeCamera();
+scene.add(new THREE.HemisphereLight(0xfff6e6, 0x6a8a5a, 1.35));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.6); sun.position.set(-4, 7, 6); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 8, bottom: -3, near: 1, far: 24 }); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; scene.add(sun);
+
+// 地面と、遠くの丘
+const ground = new THREE.Mesh(new THREE.CircleGeometry(40, 64), new THREE.MeshStandardMaterial({ color: 0x78ab66, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+for (const [x, z, r, sy, col] of [[-9, -14, 8, 0.45, 0x9cbf96], [8, -16, 10, 0.5, 0x8fb68a], [0, -22, 12, 0.4, 0xa9c8a4], [-18, -9, 7, 0.4, 0x8cb287]]) {
+  const hill = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 16), new THREE.MeshStandardMaterial({ color: col, roughness: 1 })); hill.scale.y = sy; hill.position.set(x, 0, z); scene.add(hill);
+}
+// 草（地面に、小さな草を散らす）
+{
+  const blade = new THREE.ConeGeometry(0.05, 0.4, 4); blade.translate(0, 0.2, 0);
+  const grass = new THREE.InstancedMesh(blade, new THREE.MeshStandardMaterial({ color: 0x5f9a4f, roughness: 1 }), 500); const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  let sd = 5; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 500; i++) { const a = rnd() * Math.PI * 2, r = 2.2 + rnd() * 9; e.set((rnd() - 0.5) * 0.3, rnd() * 6, (rnd() - 0.5) * 0.3); q.setFromEuler(e); m.compose(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r * 0.8 - 1), q, new THREE.Vector3(1, 0.7 + rnd() * 1.2, 1)); grass.setMatrixAt(i, m); }
+  scene.add(grass);
+}
+
+// ------------------------------------------------------- 埴輪の土の質感（濡れ・泥のたれ・ひびを、テクスチャで描く）
+const clayCanvas = document.createElement('canvas'); clayCanvas.width = clayCanvas.height = 512; const cg = clayCanvas.getContext('2d');
+const noiseCanvas = document.createElement('canvas'); noiseCanvas.width = noiseCanvas.height = 512;
+{ const g = noiseCanvas.getContext('2d'); g.fillStyle = '#c8774a'; g.fillRect(0, 0, 512, 512); let sd = 11; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 9000; i++) { g.fillStyle = rnd() < 0.5 ? `rgba(70,30,10,${0.04 + rnd() * 0.08})` : `rgba(255,220,180,${0.03 + rnd() * 0.07})`; const s = 1 + rnd() * 3; g.fillRect(rnd() * 512, rnd() * 512, s, s); }
+  for (let i = 0; i < 40; i++) { g.strokeStyle = `rgba(90,45,20,${0.03 + rnd() * 0.05})`; g.beginPath(); g.moveTo(rnd() * 512, 0); g.lineTo(rnd() * 512, 512); g.stroke(); } }
+const clayTex = new THREE.CanvasTexture(clayCanvas); clayTex.colorSpace = THREE.SRGBColorSpace; clayTex.wrapS = THREE.RepeatWrapping; clayTex.anisotropy = 8;
+let lastPaint = { soft: -1, wet: -1 };
+function paintClay() {
+  const w = Math.min(1, sim.wet + sim.soft * 0.8), s = sim.soft;
+  if (Math.abs(lastPaint.soft - s) < 0.01 && Math.abs(lastPaint.wet - w) < 0.02) return; lastPaint = { soft: s, wet: w };
+  cg.drawImage(noiseCanvas, 0, 0);
+  cg.fillStyle = `rgba(70,36,16,${0.5 * w})`; cg.fillRect(0, 0, 512, 512);                       // 濡れて、色が濃くなる
+  if (s > 0.04) {                                                                                // 泥のたれ筋
+    cg.lineCap = 'round';
+    for (let i = 0; i < 14; i++) { const x = ((i + 0.5) / 14) * 512 + Math.sin(i * 7.1) * 10, len = (60 + 330 * s) * (0.5 + 0.5 * Math.abs(Math.sin(i * 3.3 + 1))), top = 30 + (i % 4) * 28;
+      cg.strokeStyle = `rgba(78,40,18,${0.2 + 0.45 * s})`; cg.lineWidth = 8 + 8 * s; cg.beginPath(); cg.moveTo(x, top); cg.bezierCurveTo(x + 5, top + len * 0.4, x - 5, top + len * 0.7, x, top + len); cg.stroke(); } }
+  if (s > 0.2) {                                                                                 // ひび
+    cg.strokeStyle = `rgba(40,20,8,${Math.min(0.95, (s - 0.1) * 1.7)})`; cg.lineWidth = 3;
+    for (let i = 0; i < 12; i++) { let x = (i * 53 + 20) % 512, y = 60 + (i * 97) % 300; cg.beginPath(); cg.moveTo(x, y); for (let k = 0; k < 6; k++) { x += Math.sin(i * 2.7 + k * 1.9) * 22; y += 24 + 16 * s; cg.lineTo(x, y); } cg.stroke(); } }
+  clayTex.needsUpdate = true;
+}
+const clayMat = new THREE.MeshStandardMaterial({ map: clayTex, roughness: 0.86, metalness: 0 });
+const holeMat = new THREE.MeshStandardMaterial({ color: 0x24120a, roughness: 1 });
+
+// ------------------------------------------------------- 埴輪（円筒の胴・突帯・丸い頭・短い腕・丸い目と口の穴）
+const hn = new THREE.Group(); scene.add(hn);
+const bodyProf = [[0, 0], [0.84, 0], [0.86, 0.05], [0.8, 0.6], [0.7, 1.2], [0.64, 1.8], [0.62, 2.05], [0.5, 2.12], [0, 2.13]];
+const rAt = (y) => { for (let i = 0; i < bodyProf.length - 1; i++) { const [r0, y0] = bodyProf[i], [r1, y1] = bodyProf[i + 1]; if (y >= y0 && y <= y1) return r0 + (r1 - r0) * (y - y0) / Math.max(1e-6, y1 - y0); } return 0.6; };
+{
+  const body = new THREE.Mesh(new THREE.LatheGeometry(bodyProf.map(([r, y]) => new THREE.Vector2(r, y)), 56), clayMat); body.castShadow = body.receiveShadow = true; hn.add(body);
+  for (const y of [0.4, 1.02, 1.62, 2.08]) { const band = new THREE.Mesh(new THREE.TorusGeometry(rAt(y) + 0.005, 0.055, 12, 56), clayMat); band.rotation.x = Math.PI / 2; band.position.y = y; band.castShadow = true; hn.add(band); }
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.58, 48, 32), clayMat); head.scale.set(1, 1.1, 1); head.position.y = 2.7; head.castShadow = head.receiveShadow = true; hn.add(head); hn.userData.head = head;
+  const mkHole = (x, y, z, sx, sy) => { const h = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), holeMat); h.scale.set(sx, sy, 0.05); h.position.set(x, y, z); const n = new THREE.Vector3(x, 0, z).normalize(); h.rotation.y = Math.atan2(n.x, n.z); hn.add(h); return h; };
+  hn.userData.eyes = [mkHole(-0.21, 2.74, 0.52, 0.1, 0.13), mkHole(0.21, 2.74, 0.52, 0.1, 0.13)]; hn.userData.mouth = mkHole(0, 2.38, 0.555, 0.09, 0.115);
+  mkHole(0, 0.72, 0.68, 0.17, 0.25);                                                                  // 胴の透かし穴
+  for (const sd of [-1, 1]) {                                                                         // 腕: 横へ張り出して、先が上がる
+    const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(sd * 0.5, 1.9, 0), new THREE.Vector3(sd * 0.95, 1.86, 0.05), new THREE.Vector3(sd * 1.18, 1.62, 0.1), new THREE.Vector3(sd * 1.2, 1.38, 0.12)]);
+    const arm = new THREE.Mesh(new THREE.TubeGeometry(curve, 16, 0.13, 12), clayMat); arm.castShadow = true; hn.add(arm);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12), clayMat); hand.position.set(sd * 1.2, 1.36, 0.12); hand.castShadow = true; hn.add(hand);
+  }
+}
+// 足元の泥の山と、剥がれ落ちる土の欠片
+const mound = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6e3f22, roughness: 1 })); mound.visible = false; mound.receiveShadow = mound.castShadow = true; scene.add(mound);
+const chunkGeo = new THREE.DodecahedronGeometry(1, 0), chunkMat = new THREE.MeshStandardMaterial({ color: 0x9a5a34, roughness: 1, flatShading: true });
+const chunkGroup = new THREE.Group(); scene.add(chunkGroup);
+
+// ------------------------------------------------------- 花（頭頂から生える）
+const flower = new THREE.Group(); scene.add(flower);
+const stemMat = new THREE.MeshStandardMaterial({ color: 0x4f8f3a, roughness: 0.7 }), leafMat = new THREE.MeshStandardMaterial({ color: 0x6fb24d, roughness: 0.6, side: THREE.DoubleSide });
+const stem = new THREE.Mesh(new THREE.BufferGeometry(), stemMat); stem.castShadow = true; flower.add(stem);
+const leafShape = new THREE.Shape(); leafShape.moveTo(0, 0); leafShape.bezierCurveTo(0.26, 0.14, 0.5, 0.06, 0.58, -0.04); leafShape.bezierCurveTo(0.4, -0.16, 0.14, -0.12, 0, 0);
+const leafGeo = new THREE.ShapeGeometry(leafShape, 12);   // 正面（カメラ側）を向いた平面。茎から斜め上へ出す
+const leaves = [[0.28, -1], [0.5, 1], [0.7, -1]].map(([at, sd]) => { const m = new THREE.Mesh(leafGeo, leafMat); m.castShadow = true; m.userData = { at, sd }; flower.add(m); return m; });
+const bud = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshStandardMaterial({ color: 0x7bb85a, roughness: 0.6 })); bud.scale.set(0.8, 1.1, 0.8); flower.add(bud);
+const petalGeo = (() => { const g = new THREE.CircleGeometry(1, 28); g.scale(0.23, 0.095, 1); g.translate(0.23, 0, 0); g.rotateX(-Math.PI / 2); return g; })();
+const petalMats = [new THREE.MeshStandardMaterial({ color: 0xf6a6bd, side: THREE.DoubleSide, roughness: 0.6 }), new THREE.MeshStandardMaterial({ color: 0xfbc3d2, side: THREE.DoubleSide, roughness: 0.6 })];
+const petals = Array.from({ length: 8 }, (_, i) => { const piv = new THREE.Object3D(); piv.rotation.y = (i / 8) * Math.PI * 2; const m = new THREE.Mesh(petalGeo, petalMats[i % 2]); m.castShadow = true; piv.add(m); piv.userData.m = m; return piv; });
+const bloom = new THREE.Group(); petals.forEach((p) => bloom.add(p)); bloom.visible = false; flower.add(bloom);
+const core = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), new THREE.MeshStandardMaterial({ color: 0xf7d54a, roughness: 0.5 })); core.scale.y = 0.6; bloom.add(core);
+const stemH = () => 1.5 * (1 - Math.pow(1 - Math.min(1, sim.count / need), 2));
+let stemTopLocal = new THREE.Vector3();
+function updateFlower(time) {
+  const s = Math.min(1, sim.count / need), h = stemH();
+  flower.visible = sim.count > 0; if (!flower.visible) return;
+  hn.updateMatrixWorld(true); const base = new THREE.Vector3(0, HEAD_Y - 0.02, 0).applyMatrix4(hn.matrixWorld); flower.position.copy(base);
+  const sway = Math.sin(time * 1.4) * 0.05 * s + sim.wobble * 0.03;
+  const pts = [0, 0.25, 0.5, 0.75, 1].map((k) => new THREE.Vector3(sway * k * k * 1.2, h * k, 0));
+  const curve = new THREE.CatmullRomCurve3(pts); stem.geometry.dispose(); stem.geometry = new THREE.TubeGeometry(curve, 14, 0.03 + 0.012 * s, 8); stemTopLocal.copy(pts[4]);
+  for (const lf of leaves) { const { at, sd } = lf.userData, k = Math.min(1, Math.max(0, (s - at * 0.9) / 0.25)); lf.visible = k > 0.001; if (!lf.visible) continue; const p = curve.getPoint(at); lf.position.copy(p); lf.rotation.set(0, sd > 0 ? 0 : Math.PI, 0.45 + 0.1 * Math.sin(time * 1.6 + at * 9)); lf.scale.setScalar(k); }
+  const top = pts[4];
+  if (sim.bloomT < 0) { bud.visible = true; bloom.visible = false; const r = 0.06 + 0.1 * s; bud.scale.set(r * 0.8, r * 1.1, r * 0.8); bud.position.copy(top); bud.material.color.set(s > 0.8 ? 0xf08aa8 : 0x7bb85a); }
+  else {
+    bud.visible = false; bloom.visible = true; bloom.position.copy(top);
+    const b = Math.min(1, sim.bloomT / 1.6), e = 1 - Math.pow(1 - b, 3);
+    petals.forEach((pv) => { pv.userData.m.rotation.z = (1 - e) * 1.25 + 0.08; pv.userData.m.scale.setScalar(0.25 + 0.75 * e); });
+    core.scale.setScalar(0.5 + 0.5 * e); core.scale.y *= 0.6; bloom.rotation.set(1.05, 0, 0); bloom.rotateY(time * 0.05);   // 花の面を、カメラのほうへ傾ける
+  }
+}
+
+// ------------------------------------------------------- 蝶（3D。羽は、体の軸のまわりで上下にはばたく）
+function makeButterfly(hue) {
+  const g = new THREE.Group(), c1 = new THREE.Color().setHSL(hue / 360, 0.85, 0.6), c2 = new THREE.Color().setHSL(((hue + 25) % 360) / 360, 0.9, 0.78);
+  const up = new THREE.Shape(); up.moveTo(0, 0); up.bezierCurveTo(0.08, 0.28, 0.42, 0.34, 0.5, 0.12); up.bezierCurveTo(0.54, -0.06, 0.2, -0.04, 0, 0);
+  const lo = new THREE.Shape(); lo.moveTo(0, 0); lo.bezierCurveTo(0.3, -0.04, 0.4, -0.22, 0.26, -0.3); lo.bezierCurveTo(0.12, -0.34, 0.02, -0.16, 0, 0);
+  const mk = (sh, col) => { const geo = new THREE.ShapeGeometry(sh, 10); return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, side: THREE.DoubleSide, roughness: 0.6 })); };
+  const wings = [];
+  for (const sd of [-1, 1]) { const piv = new THREE.Object3D(); piv.scale.x = sd; piv.add(mk(up, c1), mk(lo, c2)); g.add(piv); wings.push(piv); }
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, 0.2, 4, 8), new THREE.MeshStandardMaterial({ color: 0x2b1a10 })); g.add(body);   // 体は縦。羽は、カメラに向いた面から、体の軸（縦）のまわりではばたく
+  g.userData.wings = wings; g.scale.setScalar(1.5); scene.add(g); return g;
+}
+function flowerWorld() { const p = flower.position.clone(); if (flower.visible) p.add(stemTopLocal); return p; }
+function spawnButterfly() {
+  const side = Math.random() < 0.5 ? -1 : 1, mesh = makeButterfly([28, 205, 320][sim.butterflies.length % 3]);
+  const b = { mesh, pos: new THREE.Vector3(side * 8, 4.8 + Math.random() * 1.2, 1 + Math.random() * 2), vel: new THREE.Vector3(), ph: Math.random() * 6, state: 'in', stateT: 0, landAt: 6 + Math.random() * 4 };
+  sim.butterflies.push(b); sim.nextButterflyAt = sim.count + Math.max(3, Math.round(need * 0.6)); flutter();
+}
+function updateButterfly(b, dt) {
+  b.stateT += dt; b.ph += dt; const c = flowerWorld(), prev = b.pos.clone(); let target;
+  if (b.state === 'in') { target = new THREE.Vector3(c.x + Math.sin(b.ph * 1.1) * 1.0, c.y + 0.5 + Math.sin(b.ph * 1.9) * 0.4, c.z + 0.9); if (b.pos.distanceTo(target) < 0.8) { b.state = 'fly'; b.stateT = 0; } b.pos.lerp(target, Math.min(1, dt * 1.4)); }
+  else if (b.state === 'fly') { target = new THREE.Vector3(c.x + Math.sin(b.ph * 0.9) * 1.5, c.y + 0.4 + Math.sin(b.ph * 1.7) * 0.55 + Math.cos(b.ph * 0.5) * 0.2, c.z + Math.cos(b.ph * 0.7) * 1.3); b.pos.lerp(target, Math.min(1, dt * 3)); if (b.stateT > b.landAt) { b.state = 'land'; b.stateT = 0; } }
+  else { target = new THREE.Vector3(c.x + 0.12, c.y + 0.1, c.z + 0.05); b.pos.lerp(target, Math.min(1, dt * 2.5)); if (b.stateT > 3.2) { b.state = 'fly'; b.stateT = 0; b.landAt = 6 + Math.random() * 5; flutter(); } }
+  const dir = b.pos.clone().sub(prev);
+  b.mesh.position.copy(b.pos);
+  const flap = b.state === 'land' ? 0.5 + 0.5 * Math.sin(b.ph * 4) : Math.abs(Math.sin(b.ph * 16)), ang = 1.25 * (1 - flap);   // 0: 羽を広げる / 大きいほど、閉じる
+  b.mesh.userData.wings.forEach((w) => { w.rotation.y = ang; });
+  b.mesh.quaternion.copy(camera.quaternion); b.mesh.rotateZ(Math.sin(b.ph * 2.3) * 0.2 + (dir.x > 0 ? -0.15 : 0.15));
+}
+
+// ======================================================= 音
+let actx = null; const ensureAudio = () => { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state !== 'running') actx.resume(); } catch (e) { actx = null; } };
+addEventListener('pointerdown', () => { if (soundOn) ensureAudio(); }, { capture: true }); addEventListener('keydown', () => { if (soundOn) ensureAudio(); }, { capture: true });
+const audible = () => soundOn && actx && actx.state === 'running';
+function tone(f0, f1, dur, amp, delay = 0, type = 'sine') { if (!audible()) return; const s = actx.currentTime + delay, o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.setValueAtTime(f0, s); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, s + Math.min(dur, 0.08)); g.gain.setValueAtTime(0.0001, s); g.gain.exponentialRampToValueAtTime(amp, s + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, s + dur); o.connect(g).connect(actx.destination); o.start(s); o.stop(s + dur + 0.02); }
+const plop = () => { const f = 520 + Math.random() * 220 + sim.count * 8; tone(f, f * 2.2, 0.16, 0.4); tone(190, 120, 0.09, 0.45, 0, 'triangle'); };
+const bloomSound = () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f, 0.9, 0.22, i * 0.12));
+const flutter = () => { tone(1400, 1800, 0.08, 0.1); tone(1800, 2200, 0.08, 0.08, 0.1); };
+
+// ======================================================= 画面座標（水滴・しぶきは p5.js が、画面の上に描く）
+const _v = new THREE.Vector3();
+function toScreen(v) { _v.copy(v).project(camera); return { x: (_v.x * 0.5 + 0.5) * innerWidth, y: (-_v.y * 0.5 + 0.5) * innerHeight }; }
+function headScreen() { hn.updateMatrixWorld(true); return toScreen(new THREE.Vector3(0, HEAD_Y, 0).applyMatrix4(hn.matrixWorld)); }
+
+// ======================================================= 1 コマ進める
+function step(dt) {
+  sim.t += dt;
+  const target = Math.max(0, Math.min(1, (sim.count - need * 0.9) / (need * 2.6)));
+  sim.soft += (target - sim.soft) * Math.min(1, dt * 1.2);
+  // しずく: 頭頂の画面位置に向かって落とす。着水が、ちょうど拍になるようにする
+  const G = 2300 * (innerHeight / 860), hs = headScreen(), y0 = -30, fall = Math.sqrt(2 * Math.max(40, hs.y - y0) / G), beat = bpm > 0 ? 60 / bpm : 1;
+  if (sim.nextLand === 0) sim.nextLand = sim.t + fall + 0.2;
+  if (sim.t >= sim.nextLand - fall) { sim.drops.push({ y: y0, vy: 0 }); sim.nextLand += beat; if (sim.nextLand < sim.t + fall) sim.nextLand = sim.t + fall + beat; }
+  for (let i = sim.drops.length - 1; i >= 0; i--) { const d = sim.drops[i]; d.vy += G * dt; d.y += d.vy * dt; if (d.y >= hs.y) { sim.drops.splice(i, 1); hit(hs); } }
+  // 頭のぷるん
+  sim.wobbleV += (-260 * sim.wobble - 14 * sim.wobbleV) * dt; sim.wobble += sim.wobbleV * dt; sim.wet = Math.max(0, sim.wet - dt * 0.1); sim.ripple = Math.max(0, sim.ripple - dt * 2);
+  const gp = innerHeight / 860;
+  for (const p of sim.parts) { p.vy += 1500 * gp * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.8; } sim.parts = sim.parts.filter((p) => p.life > 0);
+  for (const sp of sim.sparks) sp.age += dt; sim.sparks = sim.sparks.filter((s) => s.age < 1.4);
+  if (sim.bloomT >= 0) sim.bloomT += dt;
+  // 崩れた土の欠片
+  for (const c of sim.chunks) { if (c.rest) continue; c.vel.y -= 14 * dt; c.mesh.position.addScaledVector(c.vel, dt); c.mesh.rotation.x += c.vr.x * dt; c.mesh.rotation.z += c.vr.z * dt; if (c.mesh.position.y <= c.floor) { c.mesh.position.y = c.floor; c.rest = true; if (sim.t - sim.lastThud > 0.12) { sim.lastThud = sim.t; tone(130 + Math.random() * 40, 70, 0.14, 0.28, 0, 'triangle'); } } }
+  // 蝶
+  if (sim.bloomT >= 1.5 && sim.butterflies.length === 0) spawnButterfly();
+  if (sim.bloomT >= 0 && sim.butterflies.length < 3 && sim.count >= sim.nextButterflyAt) spawnButterfly();
+  for (const b of sim.butterflies) updateButterfly(b, dt);
+  $('count').textContent = sim.soft > 0.6 ? '🌱 埴輪は土に還っていく…' : sim.bloomT >= 0 ? (sim.butterflies.length ? '🦋 花が咲いて、蝶が来ました' : '🌸 花が咲きました') : `💧 ${sim.count} / ${need}`;
+}
+function hit(hs) {
+  sim.count++; if (sim.soft > 0.12) crumble(1 + Math.floor(sim.soft * 3)); sim.wobbleV += 120; sim.wet = Math.min(1, sim.wet + 0.25); sim.ripple = 1; plop();
+  for (let i = 0; i < 8; i++) sim.parts.push({ x: hs.x + (Math.random() - 0.5) * 20, y: hs.y, vx: (Math.random() - 0.5) * 240, vy: -(130 + Math.random() * 260) * innerHeight / 860, life: 1 });
+  if (sim.count >= need && sim.bloomT < 0) { sim.bloomT = 0; bloomSound(); sim.nextButterflyAt = sim.count + Math.max(3, Math.round(need * 0.6)); for (let i = 0; i < 18; i++) sim.sparks.push({ a: (i / 18) * Math.PI * 2, age: 0 }); }
+}
+function crumble(n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, r = 0.85 + Math.random() * 0.2, s = 0.08 + Math.random() * 0.1 + sim.soft * 0.08, k = kY();
+    const mesh = new THREE.Mesh(chunkGeo, chunkMat); mesh.scale.set(s, s * 0.7, s); mesh.position.set(Math.cos(a) * r, (0.3 + Math.random() * 1.9) * k, Math.sin(a) * r); mesh.castShadow = true; mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+    chunkGroup.add(mesh); sim.chunks.push({ mesh, vel: new THREE.Vector3(Math.cos(a) * (0.4 + Math.random()), 1 + Math.random(), Math.sin(a) * (0.4 + Math.random())), vr: new THREE.Vector3((Math.random() - 0.5) * 8, 0, (Math.random() - 0.5) * 8), floor: s * 0.35, rest: false });
+  }
+  while (sim.chunks.length > 70) { const c = sim.chunks.shift(); chunkGroup.remove(c.mesh); }
+}
+function update3D(time) {
+  paintClay();
+  const s = sim.soft, sq = sim.wobble * 0.012, sy = kY(), sx = 1 + 0.32 * s;
+  const clayTint = 1 - 0.3 * Math.min(1, sim.wet + s * 0.7); clayMat.color.setRGB(clayTint, clayTint, clayTint);
+  hn.scale.set((1 + sq) * sx, (1 - sq) * sy, (1 + sq) * sx);
+  for (const e of hn.userData.eyes) { e.scale.y = 0.13 * (1 + 2.2 * Math.max(0, s - 0.35)); e.scale.x = 0.1 * (1 + 0.2 * s); }
+  hn.userData.mouth.scale.y = 0.115 * (1 + 2 * Math.max(0, s - 0.35));
+  mound.visible = s > 0.08; mound.scale.set(1.0 + 1.0 * s, 0.05 + 0.5 * s, 1.0 + 1.0 * s);
+  updateFlower(time);
+}
+
+// ======================================================= p5.js: 水滴・しぶき・波紋・花の光（three.js の上に重ねる）
+const sketch = (p) => {
+  p.setup = () => { p.createCanvas(innerWidth, innerHeight); p.pixelDensity(Math.min(2, devicePixelRatio || 1)); p.noLoop(); };
+  p.draw = () => {
+    p.clear(); p.noStroke();
+    const hs = headScreen(), u = innerHeight / 860;
+    // 水が当たった波紋（頭頂の楕円）
+    if (sim.ripple > 0.02) { p.noFill(); p.stroke(170, 215, 250, 200 * sim.ripple); p.strokeWeight(2 * u); const k = 1 - sim.ripple; p.ellipse(hs.x, hs.y + 2 * u, (40 + 80 * k) * u, (9 + 20 * k) * u); p.noStroke(); }
+    // 落ちてくるしずく（丸い下と、とがった上）
+    for (const d of sim.drops) { const r = 9 * u, st = 1 + Math.min(0.8, d.vy / (2600 * u)); p.fill(120, 188, 240, 240); p.stroke(70, 130, 190, 230); p.strokeWeight(1.5 * u); p.triangle(hs.x - r * 0.95, d.y - r * 0.1, hs.x + r * 0.95, d.y - r * 0.1, hs.x, d.y - r * 2.4 * st); p.circle(hs.x, d.y + r * 0.1, r * 2); p.noStroke(); p.fill(255, 255, 255, 230); p.circle(hs.x - r * 0.3, d.y - r * 0.2, r * 0.45); }
+    // しぶき
+    for (const q of sim.parts) { p.fill(125, 190, 240, 230 * q.life); p.circle(q.x, q.y, (3.5 * q.life + 0.8) * 2 * u); }
+    // 花が咲いた瞬間の、光の粒
+    if (sim.sparks.length && sim.bloomT >= 0) { const fw = toScreen(flowerWorld()); for (const sp of sim.sparks) { const k = sp.age / 1.4, rr = (40 + 140 * k) * u; p.fill(255, 238, 160, 255 * (1 - k)); p.circle(fw.x + Math.cos(sp.a) * rr, fw.y + Math.sin(sp.a) * rr, (6 * (1 - k) + 1) * 2 * u); } }
+  };
+  p.windowResized = () => p.resizeCanvas(innerWidth, innerHeight);
+};
+const p5i = new p5(sketch);
+
+// ======================================================= 操作・メインループ
+$('bpm').oninput = (e) => { bpm = +e.target.value; $('bv').textContent = bpm; sim.nextLand = 0; };
+$('need').oninput = (e) => { need = +e.target.value; $('nv').textContent = need; };
+function reset() {
+  Object.assign(sim, { count: 0, drops: [], parts: [], sparks: [], nextLand: 0, wobble: 0, wobbleV: 0, wet: 0, ripple: 0, soft: 0, bloomT: -1, nextButterflyAt: 0 });
+  for (const b of sim.butterflies) scene.remove(b.mesh); sim.butterflies = []; for (const c of sim.chunks) chunkGroup.remove(c.mesh); sim.chunks = []; lastPaint = { soft: -1, wet: -1 };
+}
+$('reset').onclick = reset; $('snd').onclick = () => { soundOn = !soundOn; $('snd').textContent = soundOn ? '🔊 音 ON' : '🔇 音 OFF'; if (soundOn) ensureAudio(); };
+addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); reset(); } });
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); placeCamera(); });
+
+let last = performance.now();
+function frame(now) { const dt = Math.min(0.05, (now - last) / 1000); last = now; step(dt); update3D(now / 1000); renderer.render(scene, camera); p5i.redraw(); requestAnimationFrame(frame); }
+if (Q.has('ff')) { const sec = parseFloat(Q.get('ff')); for (let i = 0; i < sec * 60; i++) step(1 / 60); }
+window.__S = () => ({ count: sim.count, soft: sim.soft, bloomT: sim.bloomT, butterflies: sim.butterflies.length });
+if (Q.get('manual') === '1') {
+  // 確認用: 1 回だけ描いて、three.js の絵を画像にして、p5.js の下に敷く（ヘッドレスの画面取得では WebGL が写らないため）
+  setTimeout(() => {
+    update3D(sim.t); renderer.render(scene, camera);
+    const img = new Image(); img.src = renderer.domElement.toDataURL('image/png'); img.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:1'; document.body.appendChild(img);
+    p5i.redraw();
+  }, 600);
+} else requestAnimationFrame(frame);
+</script>
+</body>
+</html>
