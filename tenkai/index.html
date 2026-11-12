@@ -3,27 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>展開予想ボード（競馬・ボート）</title>
+<title>展開予想ボード（競馬・ボート・競輪）</title>
 <style>
   :root { --ink: #22303c; --paper: #f7f9fb; --line: #c9d3dc; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #e9eef2; color: var(--ink); font-family: system-ui, "Yu Gothic UI", Meiryo, sans-serif; }
   body { display: flex; flex-direction: column; }
-  #panel { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 10px 14px; background: #fff; border-bottom: 1px solid var(--line); font-size: 14px; user-select: none; }
+  #panel { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 14px; background: #fff; border-bottom: 1px solid var(--line); font-size: 14px; user-select: none; }
   #panel label { display: inline-flex; align-items: center; gap: 6px; }
   #panel button, #panel select { font: inherit; color: var(--ink); background: #f1f5f8; border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
   #panel button:hover { background: #e4ecf2; }
+  #panel select:disabled { opacity: .45; cursor: default; }
   #nums { display: flex; flex-wrap: wrap; gap: 4px; max-width: 560px; }
   #nums button { width: 30px; padding: 4px 0; text-align: center; }
   #nums button.sel { background: #22303c; color: #fff; border-color: #22303c; }
-  #stage { flex: 1; min-height: 0; padding: 14px; display: flex; }
-  #board { position: relative; flex: 1; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; touch-action: none; }
+  #stage { flex: 1; min-height: 0; padding: 14px; display: flex; align-items: center; justify-content: center; }
+  #board { position: relative; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; touch-action: none; flex: 1; align-self: stretch; }
+  #board.course { flex: none; align-self: auto; background: #fbfcfd; }
   body.clear #board { background: transparent; border-color: transparent; }
+  #bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .lane { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line); }
   .lane:first-of-type { border-top: 0; }
   .lane span { position: absolute; left: 12px; top: 8px; font-size: 14px; font-weight: 700; color: #7b8c9a; letter-spacing: .1em; }
-  body.clear .lane, body.clear .arrow { display: none; }
   .arrow { position: absolute; right: 14px; bottom: 8px; font-size: 13px; color: #7b8c9a; }
+  body.clear .lane, body.clear .arrow, body.clear #bg { display: none; }
   .chip { position: absolute; width: var(--sz, 54px); height: var(--sz, 54px); margin: calc(var(--sz, 54px) / -2) 0 0 calc(var(--sz, 54px) / -2); display: grid; place-items: center; font-weight: 800; font-size: calc(var(--sz, 54px) * 0.5); cursor: grab; box-shadow: 0 2px 6px rgba(0,0,0,.28); border: 2px solid rgba(0,0,0,.35); user-select: none; touch-action: none; }
   .chip.round { border-radius: 50%; } .chip.sq { border-radius: 12px; }
   .chip.drag { cursor: grabbing; box-shadow: 0 8px 18px rgba(0,0,0,.35); z-index: 99; }
@@ -32,75 +35,138 @@
 </head>
 <body>
 <div id="panel">
-  <label>頭数・艇数 <span id="nums"></span></label>
-  <label>種類 <select id="mode"><option value="horse">競馬（枠色）</option><option value="boat">ボート（1〜6号艇）</option></select></label>
-  <label>大きさ <input type="range" id="size" min="30" max="90" value="54"></label>
+  <label>種類 <select id="mode"></select></label>
+  <label>表示 <select id="view"><option value="course">コース図</option><option value="lane">脚質ボード</option></select></label>
+  <label>コース <select id="course"></select></label>
+  <label>頭数・艇数・車数 <span id="nums"></span></label>
+  <label>大きさ <input type="range" id="size" min="30" max="90" value="48"></label>
   <label><input type="checkbox" id="clear"> 背景なし（配信用）</label>
   <button id="reset">並べ直す</button>
   <button id="save">PNG保存</button>
 </div>
 <div id="stage"><div id="board"></div></div>
 <script>
-// 枠の色（競馬は 1〜8 枠、ボートは 1〜6 号艇）
-const COL = [['#ffffff', '#111'], ['#1b1b1b', '#fff'], ['#e60012', '#fff'], ['#0068b7', '#fff'], ['#ffd400', '#111'], ['#009944', '#fff'], ['#f39800', '#111'], ['#f19ec2', '#111']];
-const LANES = ['逃げ', '先行', '差し', '追込'];
+// 枠・車番の色
+const COL = [['#ffffff', '#111'], ['#1b1b1b', '#fff'], ['#e60012', '#fff'], ['#0068b7', '#fff'], ['#ffd400', '#111'], ['#009944', '#fff'], ['#f39800', '#111'], ['#f19ec2', '#111'], ['#7b3fa0', '#fff']];
+// 馬番 → 枠（9頭以上は外の枠から2頭ずつ、17・18頭は外の枠が3頭）
+function frameOf(num, n) { const c = Array(8).fill(1); let extra = n - 8; for (let f = 7; extra > 0; f = (f + 7) % 8) { c[f]++; extra--; } let acc = 0; for (let f = 0; f < 8; f++) { acc += c[f]; if (num <= acc) return f; } return 7; }
+const horseColor = (num, n) => COL[frameOf(num, n)], seqColor = (num) => COL[Math.min(COL.length - 1, num - 1)];
+
+// 種類とコース形態
+const MODES = {
+  jra: { name: '競馬（JRA）', max: 18, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#bfe3b0', courses: { l: { name: '左回り（東京・中京・新潟など）', kind: 'oval', cw: false, a: 380, r: 190, w: 120 }, r: { name: '右回り（中山・京都・阪神など）', kind: 'oval', cw: true, a: 380, r: 190, w: 120 }, s: { name: '直線（新潟 直線1000m）', kind: 'straight' } } },
+  nar: { name: '競馬（地方）', max: 16, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#e6d3ab', courses: { r: { name: '右回り（大井・園田・門別など）', kind: 'oval', cw: true, a: 340, r: 200, w: 120 }, l: { name: '左回り（川崎・船橋・浦和など）', kind: 'oval', cw: false, a: 340, r: 200, w: 120 } } },
+  boat: { name: 'ボート（競艇）', max: 6, shape: 'round', color: (n) => seqColor(n), lanes: ['1コース', '2コース', '3コース', '4コース', '5コース', '6コース'], courses: { all: { name: '水面全体（左回り）', kind: 'pond' }, m1: { name: 'スタート〜1マーク', kind: 'm1' } } },
+  keirin: { name: '競輪', max: 9, shape: 'round', color: (n) => seqColor(n), lanes: ['先行', '捲り', '追込', '自在'], band: '#efc796', courses: { b400: { name: '400バンク', kind: 'oval', cw: false, a: 330, r: 190, w: 150, bank: true }, b333: { name: '333バンク', kind: 'oval', cw: false, a: 250, r: 215, w: 150, bank: true }, b500: { name: '500バンク', kind: 'oval', cw: false, a: 430, r: 170, w: 150, bank: true } } },
+};
+const VIEWS = { course: 1, lane: 1 };
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
-const store = (() => { try { return JSON.parse(localStorage.getItem('tenkai') || '{}'); } catch (e) { return {}; } })();
-const S = { n: Math.min(18, Math.max(1, +(Q.get('n') || store.n || 8))), mode: Q.get('mode') || store.mode || 'horse', size: +(store.size || 54), pos: store.pos || {} };
+const store = (() => { try { return JSON.parse(localStorage.getItem('tenkai2') || '{}'); } catch (e) { return {}; } })();
+let modeQ = Q.get('mode') || store.mode || 'jra'; if (modeQ === 'horse') modeQ = 'jra'; if (!MODES[modeQ]) modeQ = 'jra';
+const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), size: +(store.size || 40), pos: store.pos || {} };
 if (Q.get('ui') === '0') document.body.classList.add('ui0');
 if (Q.get('clear') === '1') document.body.classList.add('clear');
-const save = () => { try { localStorage.setItem('tenkai', JSON.stringify({ n: S.n, mode: S.mode, size: S.size, pos: S.pos })); } catch (e) {} };
+const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
+const M = () => MODES[S.mode], C = () => M().courses[S.course];
+const colorOf = (num) => (S.mode === 'jra' || S.mode === 'nar' ? horseColor(num, S.n) : seqColor(num));
 
-// 馬番 → 枠（JRA の決め方: 9頭以上は、外の枠から2頭ずつ。17・18頭は8枠・7枠が3頭）
-function frameOf(num, n) {
-  const c = Array(8).fill(1); let extra = n - 8; for (let f = 7; extra > 0; f = (f + 7) % 8) { c[f]++; extra--; }
-  let acc = 0; for (let f = 0; f < 8; f++) { acc += c[f]; if (num <= acc) return f; } return 7;
+function normalize() { if (!MODES[S.mode]) S.mode = 'jra'; if (!M().courses[S.course]) S.course = Object.keys(M().courses)[0]; S.n = Math.max(1, Math.min(M().max, S.n)); }
+
+// ---- 周回コース上の位置（1600x900 の座標。反時計回りで作って、右回りは左右を反転）
+function ovalPoint(c, s, ro) {
+  const a = c.a, r0 = c.r + ro, L = 4 * a + 2 * Math.PI * r0; s = ((s % L) + L) % L; let x, y;
+  if (s < 2 * a) { x = 800 - a + s; y = 450 + r0; }
+  else if (s < 2 * a + Math.PI * r0) { const t = (s - 2 * a) / r0; x = 800 + a + r0 * Math.sin(t); y = 450 + r0 * Math.cos(t); }
+  else if (s < 4 * a + Math.PI * r0) { x = 800 + a - (s - 2 * a - Math.PI * r0); y = 450 - r0; }
+  else { const t = (s - 4 * a - Math.PI * r0) / r0; x = 800 - a - r0 * Math.sin(t); y = 450 - r0 * Math.cos(t); }
+  return { x: c.cw ? 1600 - x : x, y };
 }
-const maxCount = () => (S.mode === 'boat' ? 6 : 18);
-function colorOf(num) { return COL[S.mode === 'boat' ? Math.min(5, num - 1) : frameOf(num, S.n)]; }
-function defaultPos(i, n) { const row = i % 4; return { x: 88 - 76 * (n > 1 ? i / (n - 1) : 0), y: ((row + 0.5) / 4) * 100 }; }
+const stadium = (a, R) => `M ${800 - a} ${450 + R} H ${800 + a} A ${R} ${R} 0 0 0 ${800 + a} ${450 - R} H ${800 - a} A ${R} ${R} 0 0 0 ${800 - a} ${450 + R} Z`;
+const T = (x, y, t, o = {}) => `<text x="${x}" y="${y}" font-size="${o.s || 30}" font-weight="700" fill="${o.f || '#6d7f8d'}" text-anchor="${o.a || 'middle'}" font-family="sans-serif">${t}</text>`;
+
+function courseSVG() {
+  const c = C(), m = M();
+  if (c.kind === 'oval') {
+    const mir = (x) => (c.cw ? 1600 - x : x), gx = mir(800 + 0.35 * c.a), by = 450 + c.r + c.w / 2, ty = 450 - c.r - c.w / 2;
+    const outer = stadium(c.a, c.r + c.w / 2), inner = stadium(c.a, c.r - c.w / 2), tf = c.cw ? 'translate(1600 0) scale(-1 1)' : '';
+    let s = `<g transform="${tf}"><path d="${outer} ${inner}" fill="${m.band}" fill-rule="evenodd" stroke="#8fa0ad" stroke-width="5"/><path d="${inner}" fill="${c.bank ? '#dfeee6' : '#d9efcf'}" stroke="#8fa0ad" stroke-width="4"/>${c.bank ? `<path d="${stadium(c.a, c.r - c.w / 2 + 14)}" fill="none" stroke="#4a86c5" stroke-width="10" opacity=".55"/>` : ''}</g>`;
+    s += `<line x1="${gx}" y1="${by - c.w}" x2="${gx}" y2="${by}" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>` + T(gx, by + 40, 'ゴール', { s: 30 }) + T(800, by + 86, 'スタンド', { s: 26, f: '#9aa8b3' });
+    s += T(800, ty - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(800, 450 + 10, c.bank ? c.name : (S.mode === 'jra' ? 'JRA' : '地方競馬'), { s: 40, f: '#9fb0bd' });
+    return s;
+  }
+  if (c.kind === 'straight') return `<rect x="120" y="300" width="1360" height="300" rx="10" fill="${m.band}" stroke="#8fa0ad" stroke-width="5"/><line x1="1400" y1="300" x2="1400" y2="600" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/><line x1="200" y1="300" x2="200" y2="600" stroke="#8fa0ad" stroke-width="4" stroke-dasharray="6 8"/>` + T(200, 270, 'スタート') + T(1400, 270, 'ゴール') + T(800, 270, '進行方向 →', { s: 28 }) + T(800, 660, 'スタンド', { s: 26, f: '#9aa8b3' });
+  if (c.kind === 'pond') return `<rect x="110" y="120" width="1380" height="660" rx="140" fill="#cfe6f5" stroke="#8fa0ad" stroke-width="5"/><line x1="280" y1="620" x2="280" y2="780" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>` + T(280, 835, 'スタートライン', { s: 26 }) + T(800, 835, 'スタンド（ホームストレッチ）', { s: 26, f: '#9aa8b3' }) + `<circle cx="1300" cy="640" r="20" fill="#f39800"/>` + T(1300, 700, '1マーク', { s: 26 }) + `<circle cx="1300" cy="260" r="20" fill="#f39800"/>` + T(1300, 220, '2マーク', { s: 26 }) + T(800, 200, '← 向正面（バック）', { s: 28 }) + T(800, 450, '左回り（反時計回り）', { s: 40, f: '#9fb0bd' });
+  // スタート〜1マーク
+  let s = `<rect x="80" y="100" width="1440" height="700" rx="90" fill="#cfe6f5" stroke="#8fa0ad" stroke-width="5"/><line x1="260" y1="170" x2="260" y2="780" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>` + T(260, 830, 'スタートライン', { s: 26 });
+  for (let i = 0; i < 6; i++) { const y = 240 + i * 96; s += `<line x1="260" y1="${y}" x2="1300" y2="${y}" stroke="#8fb3cc" stroke-width="3" stroke-dasharray="4 12"/>` + T(160, y + 10, (i + 1) + 'コース', { s: 24, a: 'middle' }); }
+  return s + `<circle cx="1330" cy="170" r="22" fill="#f39800"/>` + T(1330, 130, '1マーク', { s: 26 }) + T(900, 840, '進行方向 →（左へ旋回）', { s: 26, f: '#9aa8b3' });
+}
+
+function defaultPos(num) {
+  const n = S.n, i = num - 1, c = C();
+  if (S.view === 'lane') { const rows = M().lanes.length, row = M().lanes.length === 6 ? i : i % rows; return { x: 88 - 76 * (n > 1 ? i / (n - 1) : 0), y: ((row + 0.5) / rows) * 100 }; }
+  if (c.kind === 'oval') { const p = ovalPoint(c, 1.35 * c.a + 20 - Math.floor(i / 2) * 85, ((i % 2) - 0.5) * c.w * 0.7); return { x: p.x / 16, y: p.y / 9 }; }
+  if (c.kind === 'straight') return { x: (170 + Math.floor(i / 3) * 100) / 16, y: (365 + (i % 3) * 85) / 9 };
+  if (c.kind === 'm1') return { x: (i % 2 ? 17 : 21), y: (240 + i * 96) / 9 };
+  return { x: (230 + (i % 2) * 95) / 16, y: (540 + Math.floor(i / 2) * 80) / 9 };
+}
 
 const board = $('board');
+function posOf(num) { const k = S.mode + '|' + S.view + '|' + (S.view === 'course' ? S.course : '-') + '|' + S.n; return ((S.pos[k] = S.pos[k] || {})[num] = S.pos[k][num] || defaultPos(num)); }
+const posKey = () => S.mode + '|' + S.view + '|' + (S.view === 'course' ? S.course : '-') + '|' + S.n;
 function buildBoard() {
-  board.innerHTML = '';
-  LANES.forEach((t, i) => { const d = document.createElement('div'); d.className = 'lane'; d.style.top = i * 25 + '%'; d.style.height = '25%'; d.innerHTML = '<span>' + t + '</span>'; board.appendChild(d); });
-  const ar = document.createElement('div'); ar.className = 'arrow'; ar.textContent = '前 ▶'; board.appendChild(ar);
+  board.innerHTML = ''; board.className = S.view === 'course' ? 'course' : '';
+  if (S.view === 'course') { board.insertAdjacentHTML('beforeend', `<svg id="bg" viewBox="0 0 1600 900" preserveAspectRatio="none">${courseSVG()}</svg>`); }
+  else { const L = M().lanes; L.forEach((t, i) => { const d = document.createElement('div'); d.className = 'lane'; d.style.top = (i * 100 / L.length) + '%'; d.style.height = (100 / L.length) + '%'; d.innerHTML = '<span>' + t + '</span>'; board.appendChild(d); }); const ar = document.createElement('div'); ar.className = 'arrow'; ar.textContent = '前 ▶'; board.appendChild(ar); }
   for (let num = 1; num <= S.n; num++) {
-    const [bg, fg] = colorOf(num), p = S.pos[num] || (S.pos[num] = defaultPos(num - 1, S.n));
-    const c = document.createElement('div'); c.className = 'chip ' + (S.mode === 'boat' ? 'round' : 'sq'); c.textContent = num; c.dataset.n = num;
-    c.style.background = bg; c.style.color = fg; c.style.left = p.x + '%'; c.style.top = p.y + '%';
+    const [bg, fg] = colorOf(num), p = posOf(num), c = document.createElement('div');
+    c.className = 'chip ' + M().shape; c.textContent = num; c.dataset.n = num; c.style.background = bg; c.style.color = fg; c.style.left = p.x + '%'; c.style.top = p.y + '%';
     if (bg === '#ffffff') c.style.borderColor = 'rgba(0,0,0,.55)';
     board.appendChild(c);
   }
-  board.style.setProperty('--sz', S.size + 'px');
+  board.style.setProperty('--sz', S.size + 'px'); fit();
 }
-function buildNums() {
-  const box = $('nums'); box.innerHTML = '';
-  for (let i = 1; i <= maxCount(); i++) { const b = document.createElement('button'); b.textContent = i; b.className = i === S.n ? 'sel' : ''; b.onclick = () => { S.n = i; save(); refresh(); }; box.appendChild(b); }
+function fit() {
+  const st = $('stage'), cs = getComputedStyle(st), aw = st.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), ah = st.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  if (S.view === 'course') { const w = Math.max(200, Math.min(aw, ah * 16 / 9)); board.style.width = w + 'px'; board.style.height = (w * 9 / 16) + 'px'; } else { board.style.width = ''; board.style.height = ''; }
 }
-function refresh() { S.n = Math.min(S.n, maxCount()); $('mode').value = S.mode; $('size').value = S.size; $('clear').checked = document.body.classList.contains('clear'); buildNums(); buildBoard(); }
+addEventListener('resize', fit);
+function buildNums() { const box = $('nums'); box.innerHTML = ''; for (let i = 1; i <= M().max; i++) { const b = document.createElement('button'); b.textContent = i; b.className = i === S.n ? 'sel' : ''; b.onclick = () => { S.n = i; save(); refresh(); }; box.appendChild(b); } }
+function refresh() {
+  normalize();
+  const ms = $('mode'); if (!ms.options.length) for (const [k, m] of Object.entries(MODES)) ms.add(new Option(m.name, k));
+  ms.value = S.mode; $('view').value = S.view;
+  const cs = $('course'); cs.innerHTML = ''; for (const [k, c] of Object.entries(M().courses)) cs.add(new Option(c.name, k)); cs.value = S.course; cs.disabled = S.view !== 'course';
+  $('size').value = S.size; $('clear').checked = document.body.classList.contains('clear');
+  buildNums(); buildBoard();
+}
 
 // ドラッグで動かす
 let drag = null;
-board.addEventListener('pointerdown', (e) => { const c = e.target.closest('.chip'); if (!c) return; const r = board.getBoundingClientRect(); const rc = c.getBoundingClientRect(); drag = { c, dx: e.clientX - (rc.left + rc.width / 2), dy: e.clientY - (rc.top + rc.height / 2), r }; c.classList.add('drag'); c.setPointerCapture(e.pointerId); });
-board.addEventListener('pointermove', (e) => { if (!drag) return; const r = drag.r, x = Math.min(100, Math.max(0, ((e.clientX - drag.dx - r.left) / r.width) * 100)), y = Math.min(100, Math.max(0, ((e.clientY - drag.dy - r.top) / r.height) * 100)); drag.c.style.left = x + '%'; drag.c.style.top = y + '%'; S.pos[drag.c.dataset.n] = { x, y }; });
+board.addEventListener('pointerdown', (e) => { const c = e.target.closest('.chip'); if (!c) return; const r = board.getBoundingClientRect(), rc = c.getBoundingClientRect(); drag = { c, dx: e.clientX - (rc.left + rc.width / 2), dy: e.clientY - (rc.top + rc.height / 2), r }; c.classList.add('drag'); c.setPointerCapture(e.pointerId); });
+board.addEventListener('pointermove', (e) => { if (!drag) return; const r = drag.r, x = Math.min(100, Math.max(0, ((e.clientX - drag.dx - r.left) / r.width) * 100)), y = Math.min(100, Math.max(0, ((e.clientY - drag.dy - r.top) / r.height) * 100)); drag.c.style.left = x + '%'; drag.c.style.top = y + '%'; S.pos[posKey()][drag.c.dataset.n] = { x, y }; });
 const endDrag = () => { if (drag) { drag.c.classList.remove('drag'); drag = null; save(); } };
 board.addEventListener('pointerup', endDrag); board.addEventListener('pointercancel', endDrag);
 
-$('mode').onchange = (e) => { S.mode = e.target.value; S.n = Math.min(S.n, maxCount()); save(); refresh(); };
+$('mode').onchange = (e) => { S.mode = e.target.value; S.course = Object.keys(M().courses)[0]; save(); refresh(); };
+$('view').onchange = (e) => { S.view = e.target.value; save(); refresh(); };
+$('course').onchange = (e) => { S.course = e.target.value; save(); refresh(); };
 $('size').oninput = (e) => { S.size = +e.target.value; board.style.setProperty('--sz', S.size + 'px'); save(); };
 $('clear').onchange = (e) => document.body.classList.toggle('clear', e.target.checked);
-$('reset').onclick = () => { S.pos = {}; save(); refresh(); };
-$('save').onclick = () => {
-  const r = board.getBoundingClientRect(), W = Math.round(r.width * 2), H = Math.round(r.height * 2), k = 2, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
-  const clear = document.body.classList.contains('clear');
-  if (!clear) { g.fillStyle = '#f7f9fb'; g.fillRect(0, 0, W, H); g.strokeStyle = '#c9d3dc'; g.setLineDash([8, 8]); g.lineWidth = 2; g.font = 'bold 28px sans-serif'; g.fillStyle = '#7b8c9a'; for (let i = 0; i < 4; i++) { if (i) { g.beginPath(); g.moveTo(0, (H / 4) * i); g.lineTo(W, (H / 4) * i); g.stroke(); } g.fillText(LANES[i], 24, (H / 4) * i + 42); } g.setLineDash([]); g.font = '26px sans-serif'; g.textAlign = 'right'; g.fillText('前 ▶', W - 28, H - 18); }
+$('reset').onclick = () => { delete S.pos[posKey()]; save(); refresh(); };
+
+// PNG 保存
+$('save').onclick = async () => {
+  const course = S.view === 'course', clear = document.body.classList.contains('clear'), r = board.getBoundingClientRect(), W = course ? 3200 : Math.round(r.width * 2), H = course ? 1800 : Math.round(r.height * 2), k = W / 1600 * (course ? 1 : 0) || 2;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+  if (course && !clear) { g.fillStyle = '#fbfcfd'; g.fillRect(0, 0, W, H); const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="${W}" height="${H}">${courseSVG()}</svg>`; const img = new Image(); await new Promise((res) => { img.onload = res; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); }); g.drawImage(img, 0, 0, W, H); }
+  if (!course && !clear) { const L = M().lanes; g.fillStyle = '#f7f9fb'; g.fillRect(0, 0, W, H); g.strokeStyle = '#c9d3dc'; g.setLineDash([8, 8]); g.lineWidth = 2; g.font = 'bold 28px sans-serif'; g.fillStyle = '#7b8c9a'; g.textAlign = 'left'; for (let i = 0; i < L.length; i++) { if (i) { g.beginPath(); g.moveTo(0, (H / L.length) * i); g.lineTo(W, (H / L.length) * i); g.stroke(); } g.fillText(L[i], 24, (H / L.length) * i + 42); } g.setLineDash([]); g.font = '26px sans-serif'; g.textAlign = 'right'; g.fillText('前 ▶', W - 28, H - 18); }
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let num = 1; num <= S.n; num++) {
-    const [bg, fg] = colorOf(num), p = S.pos[num], cx = (p.x / 100) * W, cy = (p.y / 100) * H, s = S.size * k;
+    const [bg, fg] = colorOf(num), p = posOf(num), cx = (p.x / 100) * W, cy = (p.y / 100) * H, s = S.size * (W / r.width);
     g.save(); g.shadowColor = 'rgba(0,0,0,.3)'; g.shadowBlur = 10; g.shadowOffsetY = 3; g.fillStyle = bg; g.beginPath();
-    if (S.mode === 'boat') g.arc(cx, cy, s / 2, 0, Math.PI * 2); else g.roundRect(cx - s / 2, cy - s / 2, s, s, 24);
-    g.fill(); g.restore(); g.lineWidth = 4; g.strokeStyle = bg === '#ffffff' ? 'rgba(0,0,0,.55)' : 'rgba(0,0,0,.35)'; g.stroke();
+    if (M().shape === 'round') g.arc(cx, cy, s / 2, 0, Math.PI * 2); else g.roundRect(cx - s / 2, cy - s / 2, s, s, s * 0.22);
+    g.fill(); g.restore(); g.lineWidth = s * 0.05; g.strokeStyle = bg === '#ffffff' ? 'rgba(0,0,0,.55)' : 'rgba(0,0,0,.35)'; g.stroke();
     g.fillStyle = fg; g.font = '800 ' + s * 0.5 + 'px sans-serif'; g.fillText(String(num), cx, cy + s * 0.03);
   }
   const a = document.createElement('a'); a.download = 'tenkai.png'; a.href = cv.toDataURL('image/png'); a.click();
