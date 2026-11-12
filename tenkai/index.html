@@ -18,7 +18,7 @@
   #nums button { width: 30px; padding: 4px 0; text-align: center; }
   #nums button.sel { background: #22303c; color: #fff; border-color: #22303c; }
   #stage { flex: 1; min-height: 0; padding: 14px; display: flex; align-items: center; justify-content: center; }
-  #board { position: relative; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; touch-action: none; flex: 1; align-self: stretch; }
+  #board { container-type: size; position: relative; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; touch-action: none; flex: 1; align-self: stretch; }
   #board.course { flex: none; align-self: auto; background: #fbfcfd; }
   body.clear #board { background: transparent; border-color: transparent; }
   #bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -27,7 +27,7 @@
   .lane span { position: absolute; left: 12px; top: 8px; font-size: 14px; font-weight: 700; color: #7b8c9a; letter-spacing: .1em; }
   .arrow { position: absolute; right: 14px; bottom: 8px; font-size: 13px; color: #7b8c9a; }
   body.clear .lane, body.clear .arrow, body.clear #bg { display: none; }
-  .chip { position: absolute; width: var(--sz, 54px); height: var(--sz, 54px); margin: calc(var(--sz, 54px) / -2) 0 0 calc(var(--sz, 54px) / -2); display: grid; place-items: center; font-weight: 800; font-size: calc(var(--sz, 54px) * 0.5); cursor: grab; box-shadow: 0 2px 6px rgba(0,0,0,.28); border: 2px solid rgba(0,0,0,.35); user-select: none; touch-action: none; }
+  .chip { --d: calc(var(--sz, 70) * 100cqw / 1600); position: absolute; width: var(--d); height: var(--d); margin: calc(var(--d) / -2) 0 0 calc(var(--d) / -2); display: grid; place-items: center; font-weight: 800; font-size: calc(var(--d) * 0.5); cursor: grab; box-shadow: 0 2px 6px rgba(0,0,0,.28); border: max(1px, calc(var(--d) * 0.04)) solid rgba(0,0,0,.35); user-select: none; touch-action: none; }
   .chip.round { border-radius: 50%; } .chip.sq { border-radius: 12px; }
   .chip.drag { cursor: grabbing; box-shadow: 0 8px 18px rgba(0,0,0,.35); z-index: 99; }
   body.ui0 #panel { display: none; } body.ui0 #stage { padding: 0; } body.ui0 #board { border-radius: 0; border: 0; }
@@ -39,7 +39,7 @@
   <label>表示 <select id="view"><option value="course">コース図</option><option value="lane">脚質ボード</option></select></label>
   <label>コース <select id="course"></select></label>
   <label>頭数・艇数・車数 <span id="nums"></span></label>
-  <label>大きさ <input type="range" id="size" min="30" max="90" value="48"></label>
+  <label>大きさ <input type="range" id="size" min="40" max="150" value="70"></label>
   <label><input type="checkbox" id="clear"> 背景なし（配信用）</label>
   <button id="reset">並べ直す</button>
   <button id="save">PNG保存</button>
@@ -63,10 +63,10 @@ const VIEWS = { course: 1, lane: 1 };
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
 const store = (() => { try { return JSON.parse(localStorage.getItem('tenkai2') || '{}'); } catch (e) { return {}; } })();
 let modeQ = Q.get('mode') || store.mode || 'jra'; if (modeQ === 'horse') modeQ = 'jra'; if (!MODES[modeQ]) modeQ = 'jra';
-const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), size: +(store.size || 40), pos: store.pos || {} };
+const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
 if (Q.get('ui') === '0') document.body.classList.add('ui0');
 if (Q.get('clear') === '1') document.body.classList.add('clear');
-const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
+const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ v: 2, mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
 const M = () => MODES[S.mode], C = () => M().courses[S.course];
 const colorOf = (num) => (S.mode === 'jra' || S.mode === 'nar' ? horseColor(num, S.n) : seqColor(num));
 
@@ -124,7 +124,7 @@ function buildBoard() {
     if (bg === '#ffffff') c.style.borderColor = 'rgba(0,0,0,.55)';
     board.appendChild(c);
   }
-  board.style.setProperty('--sz', S.size + 'px'); fit();
+  board.style.setProperty('--sz', S.size); fit();
 }
 function fit() {
   const st = $('stage'), cs = getComputedStyle(st), aw = st.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), ah = st.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
@@ -151,7 +151,7 @@ board.addEventListener('pointerup', endDrag); board.addEventListener('pointercan
 $('mode').onchange = (e) => { S.mode = e.target.value; S.course = Object.keys(M().courses)[0]; save(); refresh(); };
 $('view').onchange = (e) => { S.view = e.target.value; save(); refresh(); };
 $('course').onchange = (e) => { S.course = e.target.value; save(); refresh(); };
-$('size').oninput = (e) => { S.size = +e.target.value; board.style.setProperty('--sz', S.size + 'px'); save(); };
+$('size').oninput = (e) => { S.size = +e.target.value; board.style.setProperty('--sz', S.size); save(); };
 $('clear').onchange = (e) => document.body.classList.toggle('clear', e.target.checked);
 $('reset').onclick = () => { delete S.pos[posKey()]; save(); refresh(); };
 
@@ -163,7 +163,7 @@ $('save').onclick = async () => {
   if (!course && !clear) { const L = M().lanes; g.fillStyle = '#f7f9fb'; g.fillRect(0, 0, W, H); g.strokeStyle = '#c9d3dc'; g.setLineDash([8, 8]); g.lineWidth = 2; g.font = 'bold 28px sans-serif'; g.fillStyle = '#7b8c9a'; g.textAlign = 'left'; for (let i = 0; i < L.length; i++) { if (i) { g.beginPath(); g.moveTo(0, (H / L.length) * i); g.lineTo(W, (H / L.length) * i); g.stroke(); } g.fillText(L[i], 24, (H / L.length) * i + 42); } g.setLineDash([]); g.font = '26px sans-serif'; g.textAlign = 'right'; g.fillText('前 ▶', W - 28, H - 18); }
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let num = 1; num <= S.n; num++) {
-    const [bg, fg] = colorOf(num), p = posOf(num), cx = (p.x / 100) * W, cy = (p.y / 100) * H, s = S.size * (W / r.width);
+    const [bg, fg] = colorOf(num), p = posOf(num), cx = (p.x / 100) * W, cy = (p.y / 100) * H, s = S.size * (W / 1600);
     g.save(); g.shadowColor = 'rgba(0,0,0,.3)'; g.shadowBlur = 10; g.shadowOffsetY = 3; g.fillStyle = bg; g.beginPath();
     if (M().shape === 'round') g.arc(cx, cy, s / 2, 0, Math.PI * 2); else g.roundRect(cx - s / 2, cy - s / 2, s, s, s * 0.22);
     g.fill(); g.restore(); g.lineWidth = s * 0.05; g.strokeStyle = bg === '#ffffff' ? 'rgba(0,0,0,.55)' : 'rgba(0,0,0,.35)'; g.stroke();
