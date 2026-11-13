@@ -40,7 +40,7 @@
   <label>コース <select id="course"></select></label>
   <label>頭数・艇数・車数 <span id="nums"></span></label>
   <label>大きさ <input type="range" id="size" min="40" max="150" value="70"></label>
-  <label><input type="checkbox" id="detail"> 詳細（直線の距離）</label>
+  <label hidden><input type="checkbox" id="detail"> 詳細（直線の距離）</label>   <!-- 出す要素を選べるようにするまで、いったん非表示。?detail=1 では表示できる -->
   <label><input type="checkbox" id="clear"> 背景なし（配信用）</label>
   <button id="reset">並べ直す</button>
   <button id="save">PNG保存</button>
@@ -86,7 +86,7 @@ const VIEWS = { course: 1, lane: 1 };
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
 const store = (() => { try { return JSON.parse(localStorage.getItem('tenkai2') || '{}'); } catch (e) { return {}; } })();
 let modeQ = Q.get('mode') || store.mode || 'jra'; if (modeQ === 'horse') modeQ = 'jra'; if (!MODES[modeQ]) modeQ = 'jra';
-const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), detail: Q.get('detail') === '1' || (Q.get('detail') == null && store.detail === true), size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
+const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), detail: Q.get('detail') === '1', size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
 if (Q.get('ui') === '0') document.body.classList.add('ui0');
 if (Q.get('clear') === '1') document.body.classList.add('clear');
 const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ v: 2, detail: S.detail, mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
