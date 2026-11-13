@@ -66,19 +66,27 @@ const JRA_VENUES = [
   ['阪神', true, [['芝・外回り', 't', 473.6], ['芝・内回り', 't', 356.5], ['ダート', 'd', 352.5]]],
   ['小倉', true, [['芝', 't', 293.0], ['ダート', 'd', 291.3]]],
 ];
+// 地方競馬: [場名, 右回り, [[名前, 面, ゴール前の直線(m)]]]（参考値）
+const NAR_VENUES = [
+  ['門別', true, [['ダート', 'd', 330]]], ['盛岡', false, [['ダート', 'd', 300]]], ['水沢', true, [['ダート', 'd', 245]]],
+  ['浦和', false, [['ダート', 'd', 220]]], ['船橋', false, [['ダート', 'd', 308]]], ['大井', true, [['ダート', 'd', 386]]], ['川崎', false, [['ダート', 'd', 300]]],
+  ['金沢', true, [['ダート', 'd', 236]]], ['笠松', true, [['ダート', 'd', 238]]], ['名古屋', true, [['ダート', 'd', 240]]],
+  ['園田', true, [['ダート', 'd', 213]]], ['姫路', true, [['ダート', 'd', 230]]], ['高知', true, [['ダート', 'd', 200]]], ['佐賀', true, [['ダート', 'd', 200]]],
+  ['帯広', true, [['ばんえい直線', 's', 200]]],
+];
 const JRA_BAND = { t: '#bfe3b0', d: '#e6d3ab' };
-function jraCourses() {
-  const o = { l: { name: '左回り（汎用）', kind: 'oval', cw: false, a: 380, r: 190, w: 120, label: 'JRA' }, r: { name: '右回り（汎用）', kind: 'oval', cw: true, a: 380, r: 190, w: 120, label: 'JRA' } };
-  for (const [v, cw, list] of JRA_VENUES) list.forEach(([nm, surf, D], i) => {
+function jraCourses(venues = JRA_VENUES, gl = 'JRA') {
+  const o = { l: { name: '左回り（汎用）', kind: 'oval', cw: false, a: 380, r: 190, w: 120, label: gl, band: gl === 'JRA' ? undefined : JRA_BAND.d }, r: { name: '右回り（汎用）', kind: 'oval', cw: true, a: 380, r: 190, w: 120, label: gl, band: gl === 'JRA' ? undefined : JRA_BAND.d } };
+  for (const [v, cw, list] of venues) list.forEach(([nm, surf, D], i) => {
     const key = v + i, name = v + ' ' + nm + '（' + (cw ? '右' : '左') + (surf === 's' ? '' : '回り') + '・直線' + (D % 1 ? D.toFixed(1) : D) + 'm）';
-    o[key] = surf === 's' ? { name: v + ' ' + nm, kind: 'straight', band: JRA_BAND.t, D, grp: v, label: v + ' ' + nm } : { name, kind: 'oval', cw, a: Math.round(0.7 * D), r: 190, w: 120, band: JRA_BAND[surf], D, grp: v, label: v + ' ' + nm };
+    o[key] = surf === 's' ? { name: v + ' ' + nm, kind: 'straight', band: surf === 's' && gl !== 'JRA' ? JRA_BAND.d : JRA_BAND.t, D, grp: v, label: v + ' ' + nm } : { name, kind: 'oval', cw, a: Math.max(150, Math.round(0.7 * D)), r: 190, w: 120, band: JRA_BAND[surf], D, grp: v, label: v + ' ' + nm };
   });
   return o;
 }
 // 種類とコース形態
 const MODES = {
   jra: { name: '競馬（JRA）', max: 18, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#bfe3b0', courses: jraCourses() },
-  nar: { name: '競馬（地方）', max: 16, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#e6d3ab', courses: { r: { name: '右回り（大井・園田・門別など）', kind: 'oval', cw: true, a: 340, r: 200, w: 120 }, l: { name: '左回り（川崎・船橋・浦和など）', kind: 'oval', cw: false, a: 340, r: 200, w: 120 } } },
+  nar: { name: '競馬（地方）', max: 16, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#e6d3ab', courses: jraCourses(NAR_VENUES, '地方競馬') },
   boat: { name: 'ボート（競艇）', max: 6, shape: 'round', color: (n) => seqColor(n), lanes: ['1コース', '2コース', '3コース', '4コース', '5コース', '6コース'], courses: { all: { name: '水面全体（左回り）', kind: 'pond' }, m1: { name: 'スタート〜1マーク', kind: 'm1' } } },
   keirin: { name: '競輪', max: 9, shape: 'round', color: (n) => seqColor(n), lanes: ['先行', '捲り', '追込', '自在'], band: '#efc796', courses: { b400: { name: '400バンク', kind: 'oval', cw: false, a: 330, r: 190, w: 150, bank: true }, b333: { name: '333バンク', kind: 'oval', cw: false, a: 250, r: 215, w: 150, bank: true }, b500: { name: '500バンク', kind: 'oval', cw: false, a: 430, r: 170, w: 150, bank: true } } },
 };
