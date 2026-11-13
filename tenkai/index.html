@@ -38,6 +38,7 @@
   <label>種類 <select id="mode"></select></label>
   <label>表示 <select id="view"><option value="course">コース図</option><option value="lane">脚質ボード</option></select></label>
   <label>コース <select id="course"></select></label>
+  <label>距離 <select id="dist"></select></label>
   <label>頭数・艇数・車数 <span id="nums"></span></label>
   <label>大きさ <input type="range" id="size" min="40" max="150" value="70"></label>
   <label hidden><input type="checkbox" id="detail"> 詳細（直線の距離）</label>   <!-- 出す要素を選べるようにするまで、いったん非表示。?detail=1 では表示できる -->
@@ -53,25 +54,25 @@ const COL = [['#ffffff', '#111'], ['#1b1b1b', '#fff'], ['#e60012', '#fff'], ['#0
 function frameOf(num, n) { const c = Array(8).fill(1); let extra = n - 8; for (let f = 7; extra > 0; f = (f + 7) % 8) { c[f]++; extra--; } let acc = 0; for (let f = 0; f < 8; f++) { acc += c[f]; if (num <= acc) return f; } return 7; }
 const horseColor = (num, n) => COL[frameOf(num, n)], seqColor = (num) => COL[Math.min(COL.length - 1, num - 1)];
 
-// JRA の競馬場: [場名, 回り(右=true), [[名前, 面, ゴール前の直線(m)], ...]]。直線の距離は参考値（公式資料で要確認）
+// JRA の競馬場: [場名, 回り(右=true), [[名前, 面, ゴール前の直線(m), 形のキー, 1周(m), 距離の一覧], ...]]。数値は参考値（公式資料で要確認）
 const JRA_VENUES = [
-  ['札幌', true, [['芝', 't', 266.1], ['ダート', 'd', 264.3]]],
-  ['函館', true, [['芝', 't', 262.1], ['ダート', 'd', 260.3]]],
-  ['福島', true, [['芝', 't', 292.0], ['ダート', 'd', 295.7]]],
-  ['新潟', false, [['芝・外回り', 't', 658.7, 'outer'], ['芝・内回り', 't', 358.7, 'inner'], ['ダート', 'd', 353.9, 'inner'], ['芝・直線1000m', 's', 1000]]],
-  ['東京', false, [['芝', 't', 525.9], ['ダート', 'd', 501.6]]],
-  ['中山', true, [['芝・外回り', 't', 310.0, 'outer'], ['芝・内回り', 't', 310.0, 'inner'], ['ダート', 'd', 308.0, 'inner']]],
-  ['中京', false, [['芝', 't', 412.5], ['ダート', 'd', 410.7]]],
-  ['京都', true, [['芝・外回り', 't', 403.7, 'outer'], ['芝・内回り', 't', 328.4, 'inner'], ['ダート', 'd', 329.1, 'inner']]],
-  ['阪神', true, [['芝・外回り', 't', 473.6, 'outer'], ['芝・内回り', 't', 356.5, 'inner'], ['ダート', 'd', 352.5, 'inner']]],
-  ['小倉', true, [['芝', 't', 293.0], ['ダート', 'd', 291.3]]],
+  ['札幌', true, [['芝', 't', 266.1, 0, 1641, [1000, 1200, 1500, 1800, 2000, 2600]], ['ダート', 'd', 264.3, 0, 1487, [1000, 1700, 2400]]]],
+  ['函館', true, [['芝', 't', 262.1, 0, 1627, [1000, 1200, 1800, 2000, 2600]], ['ダート', 'd', 260.3, 0, 1475, [1000, 1700, 2400]]]],
+  ['福島', true, [['芝', 't', 292.0, 0, 1600, [1200, 1700, 1800, 2000, 2600]], ['ダート', 'd', 295.7, 0, 1445, [1150, 1700, 2400]]]],
+  ['新潟', false, [['芝・外回り', 't', 658.7, 'outer', 2223, [1400, 1600, 1800, 2000, 2200]], ['芝・内回り', 't', 358.7, 'inner', 1623, [1200, 2000, 2200, 2400]], ['ダート', 'd', 353.9, 'inner', 1472, [1200, 1800, 2500]], ['芝・直線1000m', 's', 1000]]],
+  ['東京', false, [['芝', 't', 525.9, 0, 2084, [1400, 1600, 1800, 2000, 2300, 2400, 2500, 3400]], ['ダート', 'd', 501.6, 0, 1899, [1300, 1400, 1600, 2100, 2400]]]],
+  ['中山', true, [['芝・外回り', 't', 310.0, 'outer', 1840, [1200, 1600, 2200]], ['芝・内回り', 't', 310.0, 'inner', 1667, [1800, 2000, 2500, 3600]], ['ダート', 'd', 308.0, 'inner', 1493, [1200, 1800, 2400, 2500]]]],
+  ['中京', false, [['芝', 't', 412.5, 0, 1706, [1200, 1400, 1600, 2000, 2200, 3000]], ['ダート', 'd', 410.7, 0, 1530, [1200, 1400, 1800, 1900]]]],
+  ['京都', true, [['芝・外回り', 't', 403.7, 'outer', 1894, [1400, 1600, 1800, 2200, 2400, 3000, 3200]], ['芝・内回り', 't', 328.4, 'inner', 1783, [1200, 1400, 1600, 2000]], ['ダート', 'd', 329.1, 'inner', 1608, [1200, 1400, 1800, 1900]]]],
+  ['阪神', true, [['芝・外回り', 't', 473.6, 'outer', 2089, [1600, 1800, 2400, 2600]], ['芝・内回り', 't', 356.5, 'inner', 1689, [1200, 1400, 2000, 2200, 3000]], ['ダート', 'd', 352.5, 'inner', 1518, [1200, 1400, 1800, 2000]]]],
+  ['小倉', true, [['芝', 't', 293.0, 0, 1615, [1200, 1700, 1800, 2000, 2600]], ['ダート', 'd', 291.3, 0, 1445, [1000, 1700, 2400]]]],
 ];
 // 地方競馬: [場名, 右回り, [[名前, 面, ゴール前の直線(m)]]]（参考値）
 const NAR_VENUES = [
-  ['門別', true, [['ダート', 'd', 330]]], ['盛岡', false, [['ダート', 'd', 300]]], ['水沢', true, [['ダート', 'd', 245]]],
-  ['浦和', false, [['ダート', 'd', 220]]], ['船橋', false, [['ダート', 'd', 308]]], ['大井', true, [['ダート', 'd', 386]]], ['川崎', false, [['ダート', 'd', 300]]],
-  ['金沢', true, [['ダート', 'd', 236]]], ['笠松', true, [['ダート', 'd', 238]]], ['名古屋', true, [['ダート', 'd', 240]]],
-  ['園田', true, [['ダート', 'd', 213]]], ['姫路', true, [['ダート', 'd', 230]]], ['高知', true, [['ダート', 'd', 200]]], ['佐賀', true, [['ダート', 'd', 200]]],
+  ['門別', true, [['ダート', 'd', 330, 0, 1375, [1000, 1100, 1200, 1500, 1600, 1700, 1800, 2000]]]], ['盛岡', false, [['ダート', 'd', 300, 0, 1600, [1200, 1400, 1600, 1800, 2000]]]], ['水沢', true, [['ダート', 'd', 245, 0, 1200, [850, 1300, 1400, 1600, 1800]]]],
+  ['浦和', false, [['ダート', 'd', 220, 0, 1200, [800, 1300, 1400, 1500, 1600, 1900, 2000]]]], ['船橋', false, [['ダート', 'd', 308, 0, 1400, [1000, 1200, 1500, 1600, 1700, 1800, 2200]]]], ['大井', true, [['ダート', 'd', 386, 0, 1600, [1000, 1200, 1400, 1500, 1600, 1700, 1800, 2000, 2400]]]], ['川崎', false, [['ダート', 'd', 300, 0, 1200, [900, 1400, 1500, 1600, 2000, 2100]]]],
+  ['金沢', true, [['ダート', 'd', 236, 0, 1200, [900, 1300, 1400, 1500, 1700, 1900, 2000]]]], ['笠松', true, [['ダート', 'd', 238, 0, 1100, [800, 1400, 1600, 1800, 1900]]]], ['名古屋', true, [['ダート', 'd', 240, 0, 1180, [920, 1500, 1700, 2000]]]],
+  ['園田', true, [['ダート', 'd', 213, 0, 1051, [820, 1230, 1400, 1700, 1870]]]], ['姫路', true, [['ダート', 'd', 230, 0, 1200, [800, 1400, 1500, 1800, 2000]]]], ['高知', true, [['ダート', 'd', 200, 0, 1100, [1300, 1400, 1600, 1900]]]], ['佐賀', true, [['ダート', 'd', 200, 0, 1100, [900, 1300, 1400, 1750, 1800, 2000]]]],
   ['帯広', true, [['ばんえい直線', 's', 200]]],
 ];
 const JRA_BAND = { t: '#bfe3b0', d: '#e6d3ab' };
@@ -108,11 +109,11 @@ function jraCourses(venues = JRA_VENUES, gl = 'JRA') {
   const o = { l: { name: '左回り（汎用）', kind: 'track', cw: false, shapes: gen(380 / 0.7), ref: 'turf', k: 1, w: W_TURF, band: gb, onlyDirt: gl !== 'JRA', label: gl }, r: { name: '右回り（汎用）', kind: 'track', cw: true, shapes: gen(380 / 0.7), ref: 'turf', k: 1, w: W_TURF, band: gb, onlyDirt: gl !== 'JRA', label: gl } };
   for (const [v, cw, list] of venues) {
     const shapes = VENUE_SHAPES[v] || gen(list[0][2]), dirt = list.find((e) => e[1] === 'd'), dirtRef = dirt ? (dirt[3] || 'turf') : null, onlyDirt = list.every((e) => e[1] !== 't');
-    list.forEach(([nm, surf, D, ref], i) => {
+    list.forEach(([nm, surf, D, ref, lap, dists], i) => {
       const key = v + i, name = v + ' ' + nm + '（' + (cw ? '右' : '左') + (surf === 's' ? '' : '回り') + '・直線' + (D % 1 ? D.toFixed(1) : D) + 'm）';
       if (surf === 's') { o[key] = { name: v + ' ' + nm, kind: 'straight', band: gl !== 'JRA' ? JRA_BAND.d : JRA_BAND.t, D, grp: v, label: v + ' ' + nm }; return; }
       const isD = surf === 'd' && !onlyDirt;
-      o[key] = { name, kind: 'track', cw, shapes, ref: ref || 'turf', k: isD ? DIRT_K : 1, w: isD ? W_DIRT : W_TURF, band: JRA_BAND[surf], dirtRef: onlyDirt ? null : dirtRef, onlyDirt, D, grp: v, label: v + ' ' + nm };
+      o[key] = { name, kind: 'track', cw, shapes, lap: lap || 0, dists: dists || [], ref: ref || 'turf', k: isD ? DIRT_K : 1, w: isD ? W_DIRT : W_TURF, band: JRA_BAND[surf], dirtRef: onlyDirt ? null : dirtRef, onlyDirt, D, grp: v, label: v + ' ' + nm };
     });
   }
   return o;
@@ -128,13 +129,15 @@ const VIEWS = { course: 1, lane: 1 };
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
 const store = (() => { try { return JSON.parse(localStorage.getItem('tenkai2') || '{}'); } catch (e) { return {}; } })();
 let modeQ = Q.get('mode') || store.mode || 'jra'; if (modeQ === 'horse') modeQ = 'jra'; if (!MODES[modeQ]) modeQ = 'jra';
-const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), detail: Q.get('detail') === '1', size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
+const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, dist: store.dist || {}, n: +(Q.get('n') || store.n || 8), detail: Q.get('detail') === '1', size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
 if (Q.get('ui') === '0') document.body.classList.add('ui0');
 if (Q.get('clear') === '1') document.body.classList.add('clear');
-const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ v: 2, detail: S.detail, mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
+const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ v: 2, detail: S.detail, dist: S.dist, mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
 const M = () => MODES[S.mode], C = () => M().courses[S.course];
+const distOf = () => { const c = C(); if (!c || !c.dists || !c.dists.length) return 0; const d = +(S.dist[S.mode + '|' + S.course] || 0); return c.dists.includes(d) ? d : 0; };   // 選んだ距離（コースごとに覚える。0 は指定なし）
 const colorOf = (num) => (S.mode === 'jra' || S.mode === 'nar' ? horseColor(num, S.n) : seqColor(num));
 
+if (Q.get('dist')) { S.dist[S.mode + '|' + (M().courses[S.course] ? S.course : Object.keys(M().courses)[0])] = +Q.get('dist'); }
 function normalize() { if (!MODES[S.mode]) S.mode = 'jra'; if (!M().courses[S.course]) S.course = Object.keys(M().courses)[0]; S.n = Math.max(1, Math.min(M().max, S.n)); }
 
 // ---- 周回コース上の位置（1600x900 の座標。反時計回りで作って、右回りは左右を反転）
@@ -162,14 +165,27 @@ function courseSVG() {
     for (const b of bands) { const info = pathInfo(b.d), t = sc(b.k, info); s += `<g opacity="${b.sel ? 1 : 0.38}"><path d="${b.d}" fill="none" stroke="#8fa0ad" stroke-width="${b.w + 6}" ${t}/><path d="${b.d}" fill="none" stroke="${b.col}" stroke-width="${b.w}" ${t}/></g>`; }
     // ゴール（選んだコースの、ホームストレッチの右寄り）
     const sh = c.shapes[c.ref], info = pathInfo(sh.d), k = c.k, gx = info.cx + (sh.home[1] - 90 - info.cx) * k, gy = info.cy + (sh.home[2] - info.cy) * k, x0 = info.cx + (sh.home[0] - info.cx) * k;
+    // 距離が選ばれていたら、スタート地点と走る道のりを描く（1周の長さから、ゴールより手前へさかのぼる）
+    const dist = distOf(), L = info.L, sg = sh.home[1] - 90 - sh.home[0]; let st = null;
+    if (dist && c.lap) {
+      const full = dist * L / c.lap, run = Math.min(L, full), s0 = (((sg - full) % L) + L) % L, t = sc(k, info);
+      const dash = run >= L - 1 ? '' : (s0 < sg ? `stroke-dasharray="${run} ${L}" stroke-dashoffset="${-s0}"` : `stroke-dasharray="${sg} ${s0 - sg} ${L - s0}"`);
+      s += `<path d="${sh.d}" fill="none" stroke="#4a86c5" stroke-width="${c.w * 0.9}" opacity=".3" ${dash} ${t}/>`;
+      const p = info.el.getPointAtLength(s0), q = info.el.getPointAtLength((s0 + 2) % L), tx = q.x - p.x, ty = q.y - p.y, tl = Math.hypot(tx, ty) || 1, nx = -ty / tl, ny = tx / tl, hw = W_TURF / 2 + 4;
+      const P = (x, y) => [info.cx + (x - info.cx) * k, info.cy + (y - info.cy) * k];
+      const [ax, ay] = P(p.x + nx * hw, p.y + ny * hw), [bx, by] = P(p.x - nx * hw, p.y - ny * hw), [lx, ly2] = P(p.x + nx * (hw + 92), p.y + ny * (hw + 92));
+      s += `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#d6336c" stroke-width="8"/>`;
+      st = { x: mir(lx), y: ly2 };
+    }
     s += `<line x1="${gx}" y1="${gy - c.w / 2}" x2="${gx}" y2="${gy + c.w / 2}" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>`;
     const det = S.detail && c.D, ly = gy + c.w / 2 + 36;
     if (det) s += `<g stroke="#d6336c" stroke-width="5"><line x1="${x0}" y1="${ly}" x2="${gx}" y2="${ly}"/><line x1="${x0}" y1="${ly - 14}" x2="${x0}" y2="${ly + 14}"/><line x1="${gx}" y1="${ly - 14}" x2="${gx}" y2="${ly + 14}"/></g>`;
     s += '</g>';
+    if (st) s += T(st.x, st.y + 10, 'スタート ' + dist + 'm', { s: 30, f: '#d6336c' });
     if (det) s += T(mir((x0 + gx) / 2), ly + 46, 'ゴール前の直線 ' + (c.D % 1 ? c.D.toFixed(1) : c.D) + 'm', { s: 32, f: '#d6336c' }) + T(mir(gx), ly + 86, 'ゴール', { s: 28 });
     else s += T(mir(gx), gy + c.w / 2 + 40, 'ゴール', { s: 30 });
     { const sy = Math.max(oi.y1 + W_TURF / 2 + 86, det ? ly + 124 : 0); if (sy < 885) s += T(800, sy, 'スタンド', { s: 26, f: '#9aa8b3' }); }
-    s += '' + T(800, oi.y0 - W_TURF / 2 - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(mir(oi.cx), oi.cy + 10, c.label, { s: 40, f: '#9fb0bd' });
+    s += '' + T(800, oi.y0 - W_TURF / 2 - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(mir(oi.cx), oi.cy + 10, c.label + (dist ? ' ' + dist + 'm' : ''), { s: 40, f: '#9fb0bd' });
     return s;
   }
   if (c.kind === 'oval') {
@@ -197,7 +213,8 @@ function defaultPos(num) {
   if (c.kind === 'oval') { const p = ovalPoint(c, 1.35 * c.a + 20 - Math.floor(i / 2) * 85, ((i % 2) - 0.5) * c.w * 0.7); return { x: p.x / 16, y: p.y / 9 }; }
   if (c.kind === 'track') {
     const sh = c.shapes[c.ref], info = pathInfo(sh.d), k = c.k, L = info.L, sg = sh.home[1] - 90 - sh.home[0];
-    let sp = sg - 10 - Math.floor(i / 2) * 85 / k; sp = ((sp % L) + L) % L;
+    const dist = distOf(), run = dist && c.lap ? dist * L / c.lap : 0;
+    let sp = run ? sg - (run % L) + 40 / k + Math.floor(i / 2) * 85 / k : sg - 10 - Math.floor(i / 2) * 85 / k; sp = ((sp % L) + L) % L;
     const p = info.el.getPointAtLength(sp), q = info.el.getPointAtLength((sp + 2) % L), tx = q.x - p.x, ty = q.y - p.y, tl = Math.hypot(tx, ty) || 1, ro = ((i % 2) - 0.5) * W_TURF * 0.7;
     let x = p.x - ty / tl * ro, y = p.y + tx / tl * ro; x = info.cx + (x - info.cx) * k; y = info.cy + (y - info.cy) * k; if (c.cw) x = 1600 - x;
     return { x: x / 16, y: y / 9 };
@@ -208,8 +225,8 @@ function defaultPos(num) {
 }
 
 const board = $('board');
-function posOf(num) { const k = S.mode + '|' + S.view + '|' + (S.view === 'course' ? S.course : '-') + '|' + S.n; return ((S.pos[k] = S.pos[k] || {})[num] = S.pos[k][num] || defaultPos(num)); }
-const posKey = () => S.mode + '|' + S.view + '|' + (S.view === 'course' ? S.course : '-') + '|' + S.n;
+const posKey = () => S.mode + '|' + S.view + '|' + (S.view === 'course' ? S.course + '|' + distOf() : '-') + '|' + S.n;
+function posOf(num) { const k = posKey(); return ((S.pos[k] = S.pos[k] || {})[num] = S.pos[k][num] || defaultPos(num)); }
 function buildBoard() {
   board.innerHTML = ''; board.className = S.view === 'course' ? 'course' : '';
   if (S.view === 'course') { board.insertAdjacentHTML('beforeend', `<svg id="bg" viewBox="0 0 1600 900" preserveAspectRatio="none">${courseSVG()}</svg>`); }
@@ -233,6 +250,7 @@ function refresh() {
   const ms = $('mode'); if (!ms.options.length) for (const [k, m] of Object.entries(MODES)) ms.add(new Option(m.name, k));
   ms.value = S.mode; $('view').value = S.view;
   const cs = $('course'); cs.innerHTML = ''; { const groups = {}; for (const [k, c] of Object.entries(M().courses)) { let par = cs; if (c.grp) { par = groups[c.grp] || (groups[c.grp] = Object.assign(document.createElement('optgroup'), { label: c.grp })); if (!par.parentNode) cs.appendChild(par); } par.appendChild(new Option(c.name, k)); } } cs.value = S.course; cs.disabled = S.view !== 'course';
+  { const ds = $('dist'), c = C(), list = (S.view === 'course' && c && c.dists) || []; ds.innerHTML = ''; ds.add(new Option('—', '0')); for (const d of list) ds.add(new Option(d + 'm', String(d))); ds.value = String(distOf()); ds.disabled = !list.length; }
   $('size').value = S.size; $('detail').checked = !!S.detail; $('clear').checked = document.body.classList.contains('clear');
   buildNums(); buildBoard();
 }
@@ -247,6 +265,7 @@ board.addEventListener('pointerup', endDrag); board.addEventListener('pointercan
 $('mode').onchange = (e) => { S.mode = e.target.value; S.course = Object.keys(M().courses)[0]; save(); refresh(); };
 $('view').onchange = (e) => { S.view = e.target.value; save(); refresh(); };
 $('course').onchange = (e) => { S.course = e.target.value; save(); refresh(); };
+$('dist').onchange = (e) => { S.dist[S.mode + '|' + S.course] = +e.target.value; save(); refresh(); };
 $('size').oninput = (e) => { S.size = +e.target.value; board.style.setProperty('--sz', S.size); save(); };
 $('detail').onchange = (e) => { S.detail = e.target.checked; save(); buildBoard(); };
 $('clear').onchange = (e) => document.body.classList.toggle('clear', e.target.checked);
