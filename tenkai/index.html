@@ -172,7 +172,7 @@ function courseSVG() {
     if (dist && c.lap) {
       const full = dist * L / c.lap, run = Math.min(L, full), s0 = (((sg - full) % L) + L) % L, t = sc(k, info);
       const dash = run >= L - 1 ? '' : (s0 < sg ? `stroke-dasharray="${run} ${L}" stroke-dashoffset="${-s0}"` : `stroke-dasharray="${sg} ${s0 - sg} ${L - s0}"`);
-      s += `<path d="${sh.d}" fill="none" stroke="#ffb020" stroke-width="${c.w * 0.72}" opacity=".95" ${dash} ${t}/>`;   // 走る道のり: 橙色
+      s += `<path d="${sh.d}" fill="none" stroke="${c.band === JRA_BAND.d ? '#ffb020' : '#2f9e44'}" stroke-width="${c.w * 0.72}" opacity=".95" ${dash} ${t}/>`;   // 走る道のり: 芝は濃い緑、ダートは橙色
       const p = info.el.getPointAtLength(s0), q = info.el.getPointAtLength((s0 + 2) % L), tx = q.x - p.x, ty = q.y - p.y, tl = Math.hypot(tx, ty) || 1, nx = -ty / tl, ny = tx / tl, hw = W_TURF / 2 + 4;
       const P = (x, y) => [info.cx + (x - info.cx) * k, info.cy + (y - info.cy) * k];
       const [ax, ay] = P(p.x + nx * hw, p.y + ny * hw), [bx, by] = P(p.x - nx * hw, p.y - ny * hw), [lx, ly2] = P(p.x + nx * (hw + 92), p.y + ny * (hw + 92));
