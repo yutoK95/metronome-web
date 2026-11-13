@@ -40,6 +40,7 @@
   <label>コース <select id="course"></select></label>
   <label>頭数・艇数・車数 <span id="nums"></span></label>
   <label>大きさ <input type="range" id="size" min="40" max="150" value="70"></label>
+  <label><input type="checkbox" id="detail"> 詳細（直線の距離）</label>
   <label><input type="checkbox" id="clear"> 背景なし（配信用）</label>
   <button id="reset">並べ直す</button>
   <button id="save">PNG保存</button>
@@ -52,9 +53,31 @@ const COL = [['#ffffff', '#111'], ['#1b1b1b', '#fff'], ['#e60012', '#fff'], ['#0
 function frameOf(num, n) { const c = Array(8).fill(1); let extra = n - 8; for (let f = 7; extra > 0; f = (f + 7) % 8) { c[f]++; extra--; } let acc = 0; for (let f = 0; f < 8; f++) { acc += c[f]; if (num <= acc) return f; } return 7; }
 const horseColor = (num, n) => COL[frameOf(num, n)], seqColor = (num) => COL[Math.min(COL.length - 1, num - 1)];
 
+// JRA の競馬場: [場名, 回り(右=true), [[名前, 面, ゴール前の直線(m)], ...]]。直線の距離は参考値（公式資料で要確認）
+const JRA_VENUES = [
+  ['札幌', true, [['芝', 't', 266.1], ['ダート', 'd', 264.3]]],
+  ['函館', true, [['芝', 't', 262.1], ['ダート', 'd', 260.3]]],
+  ['福島', true, [['芝', 't', 292.0], ['ダート', 'd', 295.7]]],
+  ['新潟', false, [['芝・外回り', 't', 658.7], ['芝・内回り', 't', 358.7], ['ダート', 'd', 353.9], ['芝・直線1000m', 's', 1000]]],
+  ['東京', false, [['芝', 't', 525.9], ['ダート', 'd', 501.6]]],
+  ['中山', true, [['芝', 't', 310.0], ['ダート', 'd', 308.0]]],
+  ['中京', false, [['芝', 't', 412.5], ['ダート', 'd', 410.7]]],
+  ['京都', true, [['芝・外回り', 't', 403.7], ['芝・内回り', 't', 328.4], ['ダート', 'd', 329.1]]],
+  ['阪神', true, [['芝・外回り', 't', 473.6], ['芝・内回り', 't', 356.5], ['ダート', 'd', 352.5]]],
+  ['小倉', true, [['芝', 't', 293.0], ['ダート', 'd', 291.3]]],
+];
+const JRA_BAND = { t: '#bfe3b0', d: '#e6d3ab' };
+function jraCourses() {
+  const o = { l: { name: '左回り（汎用）', kind: 'oval', cw: false, a: 380, r: 190, w: 120, label: 'JRA' }, r: { name: '右回り（汎用）', kind: 'oval', cw: true, a: 380, r: 190, w: 120, label: 'JRA' } };
+  for (const [v, cw, list] of JRA_VENUES) list.forEach(([nm, surf, D], i) => {
+    const key = v + i, name = v + ' ' + nm + '（' + (cw ? '右' : '左') + (surf === 's' ? '' : '回り') + '・直線' + (D % 1 ? D.toFixed(1) : D) + 'm）';
+    o[key] = surf === 's' ? { name: v + ' ' + nm, kind: 'straight', band: JRA_BAND.t, D, grp: v, label: v + ' ' + nm } : { name, kind: 'oval', cw, a: Math.round(0.7 * D), r: 190, w: 120, band: JRA_BAND[surf], D, grp: v, label: v + ' ' + nm };
+  });
+  return o;
+}
 // 種類とコース形態
 const MODES = {
-  jra: { name: '競馬（JRA）', max: 18, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#bfe3b0', courses: { l: { name: '左回り（東京・中京・新潟など）', kind: 'oval', cw: false, a: 380, r: 190, w: 120 }, r: { name: '右回り（中山・京都・阪神など）', kind: 'oval', cw: true, a: 380, r: 190, w: 120 }, s: { name: '直線（新潟 直線1000m）', kind: 'straight' } } },
+  jra: { name: '競馬（JRA）', max: 18, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#bfe3b0', courses: jraCourses() },
   nar: { name: '競馬（地方）', max: 16, shape: 'sq', color: horseColor, lanes: ['逃げ', '先行', '差し', '追込'], band: '#e6d3ab', courses: { r: { name: '右回り（大井・園田・門別など）', kind: 'oval', cw: true, a: 340, r: 200, w: 120 }, l: { name: '左回り（川崎・船橋・浦和など）', kind: 'oval', cw: false, a: 340, r: 200, w: 120 } } },
   boat: { name: 'ボート（競艇）', max: 6, shape: 'round', color: (n) => seqColor(n), lanes: ['1コース', '2コース', '3コース', '4コース', '5コース', '6コース'], courses: { all: { name: '水面全体（左回り）', kind: 'pond' }, m1: { name: 'スタート〜1マーク', kind: 'm1' } } },
   keirin: { name: '競輪', max: 9, shape: 'round', color: (n) => seqColor(n), lanes: ['先行', '捲り', '追込', '自在'], band: '#efc796', courses: { b400: { name: '400バンク', kind: 'oval', cw: false, a: 330, r: 190, w: 150, bank: true }, b333: { name: '333バンク', kind: 'oval', cw: false, a: 250, r: 215, w: 150, bank: true }, b500: { name: '500バンク', kind: 'oval', cw: false, a: 430, r: 170, w: 150, bank: true } } },
@@ -63,10 +86,10 @@ const VIEWS = { course: 1, lane: 1 };
 const Q = new URLSearchParams(location.search), $ = (id) => document.getElementById(id);
 const store = (() => { try { return JSON.parse(localStorage.getItem('tenkai2') || '{}'); } catch (e) { return {}; } })();
 let modeQ = Q.get('mode') || store.mode || 'jra'; if (modeQ === 'horse') modeQ = 'jra'; if (!MODES[modeQ]) modeQ = 'jra';
-const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
+const S = { mode: modeQ, view: VIEWS[Q.get('view')] ? Q.get('view') : (store.view || 'course'), course: Q.get('course') || store.course, n: +(Q.get('n') || store.n || 8), detail: Q.get('detail') === '1' || (Q.get('detail') == null && store.detail === true), size: store.size >= 40 && store.size <= 150 && store.v === 2 ? +store.size : 70, pos: store.pos || {} };
 if (Q.get('ui') === '0') document.body.classList.add('ui0');
 if (Q.get('clear') === '1') document.body.classList.add('clear');
-const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ v: 2, mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
+const save = () => { try { localStorage.setItem('tenkai2', JSON.stringify({ v: 2, detail: S.detail, mode: S.mode, view: S.view, course: S.course, n: S.n, size: S.size, pos: S.pos })); } catch (e) {} };
 const M = () => MODES[S.mode], C = () => M().courses[S.course];
 const colorOf = (num) => (S.mode === 'jra' || S.mode === 'nar' ? horseColor(num, S.n) : seqColor(num));
 
@@ -89,12 +112,15 @@ function courseSVG() {
   if (c.kind === 'oval') {
     const mir = (x) => (c.cw ? 1600 - x : x), gx = mir(800 + 0.35 * c.a), by = 450 + c.r + c.w / 2, ty = 450 - c.r - c.w / 2;
     const outer = stadium(c.a, c.r + c.w / 2), inner = stadium(c.a, c.r - c.w / 2), tf = c.cw ? 'translate(1600 0) scale(-1 1)' : '';
-    let s = `<g transform="${tf}"><path d="${outer} ${inner}" fill="${m.band}" fill-rule="evenodd" stroke="#8fa0ad" stroke-width="5"/><path d="${inner}" fill="${c.bank ? '#dfeee6' : '#d9efcf'}" stroke="#8fa0ad" stroke-width="4"/>${c.bank ? `<path d="${stadium(c.a, c.r - c.w / 2 + 14)}" fill="none" stroke="#4a86c5" stroke-width="10" opacity=".55"/>` : ''}</g>`;
-    s += `<line x1="${gx}" y1="${by - c.w}" x2="${gx}" y2="${by}" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>` + T(gx, by + 40, 'ゴール', { s: 30 }) + T(800, by + 86, 'スタンド', { s: 26, f: '#9aa8b3' });
-    s += T(800, ty - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(800, 450 + 10, c.bank ? c.name : (S.mode === 'jra' ? 'JRA' : '地方競馬'), { s: 40, f: '#9fb0bd' });
+    let s = `<g transform="${tf}"><path d="${outer} ${inner}" fill="${c.band || m.band}" fill-rule="evenodd" stroke="#8fa0ad" stroke-width="5"/><path d="${inner}" fill="${c.bank ? '#dfeee6' : '#d9efcf'}" stroke="#8fa0ad" stroke-width="4"/>${c.bank ? `<path d="${stadium(c.a, c.r - c.w / 2 + 14)}" fill="none" stroke="#4a86c5" stroke-width="10" opacity=".55"/>` : ''}</g>`;
+    const det = S.detail && c.D, x0 = mir(800 - c.a);
+    s += `<line x1="${gx}" y1="${by - c.w}" x2="${gx}" y2="${by}" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>`;
+    if (det) { const ly = by + 36; s += `<g stroke="#d6336c" stroke-width="5"><line x1="${x0}" y1="${ly}" x2="${gx}" y2="${ly}"/><line x1="${x0}" y1="${ly - 14}" x2="${x0}" y2="${ly + 14}"/><line x1="${gx}" y1="${ly - 14}" x2="${gx}" y2="${ly + 14}"/></g>` + T((x0 + gx) / 2, ly + 46, 'ゴール前の直線 ' + (c.D % 1 ? c.D.toFixed(1) : c.D) + 'm', { s: 32, f: '#d6336c' }) + T(gx, ly + 86, 'ゴール', { s: 28 }); }
+    else s += T(gx, by + 40, 'ゴール', { s: 30 }) + T(800, by + 86, 'スタンド', { s: 26, f: '#9aa8b3' });
+    s += T(800, ty - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(800, 450 + 10, c.bank ? c.name : (c.label || (S.mode === 'jra' ? 'JRA' : '地方競馬')), { s: 40, f: '#9fb0bd' });
     return s;
   }
-  if (c.kind === 'straight') return `<rect x="120" y="300" width="1360" height="300" rx="10" fill="${m.band}" stroke="#8fa0ad" stroke-width="5"/><line x1="1400" y1="300" x2="1400" y2="600" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/><line x1="200" y1="300" x2="200" y2="600" stroke="#8fa0ad" stroke-width="4" stroke-dasharray="6 8"/>` + T(200, 270, 'スタート') + T(1400, 270, 'ゴール') + T(800, 270, '進行方向 →', { s: 28 }) + T(800, 660, 'スタンド', { s: 26, f: '#9aa8b3' });
+  if (c.kind === 'straight') return (S.detail && c.D ? `<g stroke="#d6336c" stroke-width="5"><line x1="200" y1="710" x2="1400" y2="710"/><line x1="200" y1="696" x2="200" y2="724"/><line x1="1400" y1="696" x2="1400" y2="724"/></g>` + T(800, 764, 'スタート〜ゴール ' + c.D + 'm', { s: 32, f: '#d6336c' }) : '') + `<rect x="120" y="300" width="1360" height="300" rx="10" fill="${m.band}" stroke="#8fa0ad" stroke-width="5"/><line x1="1400" y1="300" x2="1400" y2="600" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/><line x1="200" y1="300" x2="200" y2="600" stroke="#8fa0ad" stroke-width="4" stroke-dasharray="6 8"/>` + T(200, 270, 'スタート') + T(1400, 270, 'ゴール') + T(800, 270, '進行方向 →', { s: 28 }) + T(800, 660, 'スタンド', { s: 26, f: '#9aa8b3' });
   if (c.kind === 'pond') return `<rect x="110" y="120" width="1380" height="660" rx="140" fill="#cfe6f5" stroke="#8fa0ad" stroke-width="5"/><line x1="280" y1="620" x2="280" y2="780" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>` + T(280, 835, 'スタートライン', { s: 26 }) + T(800, 835, 'スタンド（ホームストレッチ）', { s: 26, f: '#9aa8b3' }) + `<circle cx="1300" cy="640" r="20" fill="#f39800"/>` + T(1300, 700, '1マーク', { s: 26 }) + `<circle cx="1300" cy="260" r="20" fill="#f39800"/>` + T(1300, 220, '2マーク', { s: 26 }) + T(800, 200, '← 向正面（バック）', { s: 28 }) + T(800, 450, '左回り（反時計回り）', { s: 40, f: '#9fb0bd' });
   // スタート〜1マーク
   let s = `<rect x="80" y="100" width="1440" height="700" rx="90" fill="#cfe6f5" stroke="#8fa0ad" stroke-width="5"/><line x1="260" y1="170" x2="260" y2="780" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>` + T(260, 830, 'スタートライン', { s: 26 });
@@ -136,8 +162,8 @@ function refresh() {
   normalize();
   const ms = $('mode'); if (!ms.options.length) for (const [k, m] of Object.entries(MODES)) ms.add(new Option(m.name, k));
   ms.value = S.mode; $('view').value = S.view;
-  const cs = $('course'); cs.innerHTML = ''; for (const [k, c] of Object.entries(M().courses)) cs.add(new Option(c.name, k)); cs.value = S.course; cs.disabled = S.view !== 'course';
-  $('size').value = S.size; $('clear').checked = document.body.classList.contains('clear');
+  const cs = $('course'); cs.innerHTML = ''; { const groups = {}; for (const [k, c] of Object.entries(M().courses)) { let par = cs; if (c.grp) { par = groups[c.grp] || (groups[c.grp] = Object.assign(document.createElement('optgroup'), { label: c.grp })); if (!par.parentNode) cs.appendChild(par); } par.appendChild(new Option(c.name, k)); } } cs.value = S.course; cs.disabled = S.view !== 'course';
+  $('size').value = S.size; $('detail').checked = !!S.detail; $('clear').checked = document.body.classList.contains('clear');
   buildNums(); buildBoard();
 }
 
@@ -152,6 +178,7 @@ $('mode').onchange = (e) => { S.mode = e.target.value; S.course = Object.keys(M(
 $('view').onchange = (e) => { S.view = e.target.value; save(); refresh(); };
 $('course').onchange = (e) => { S.course = e.target.value; save(); refresh(); };
 $('size').oninput = (e) => { S.size = +e.target.value; board.style.setProperty('--sz', S.size); save(); };
+$('detail').onchange = (e) => { S.detail = e.target.checked; save(); buildBoard(); };
 $('clear').onchange = (e) => document.body.classList.toggle('clear', e.target.checked);
 $('reset').onclick = () => { delete S.pos[posKey()]; save(); refresh(); };
 
