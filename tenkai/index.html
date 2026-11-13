@@ -58,12 +58,12 @@ const JRA_VENUES = [
   ['札幌', true, [['芝', 't', 266.1], ['ダート', 'd', 264.3]]],
   ['函館', true, [['芝', 't', 262.1], ['ダート', 'd', 260.3]]],
   ['福島', true, [['芝', 't', 292.0], ['ダート', 'd', 295.7]]],
-  ['新潟', false, [['芝・外回り', 't', 658.7], ['芝・内回り', 't', 358.7], ['ダート', 'd', 353.9], ['芝・直線1000m', 's', 1000]]],
+  ['新潟', false, [['芝・外回り', 't', 658.7, 'outer'], ['芝・内回り', 't', 358.7, 'inner'], ['ダート', 'd', 353.9, 'inner'], ['芝・直線1000m', 's', 1000]]],
   ['東京', false, [['芝', 't', 525.9], ['ダート', 'd', 501.6]]],
-  ['中山', true, [['芝', 't', 310.0], ['ダート', 'd', 308.0]]],
+  ['中山', true, [['芝・外回り', 't', 310.0, 'outer'], ['芝・内回り', 't', 310.0, 'inner'], ['ダート', 'd', 308.0, 'inner']]],
   ['中京', false, [['芝', 't', 412.5], ['ダート', 'd', 410.7]]],
-  ['京都', true, [['芝・外回り', 't', 403.7], ['芝・内回り', 't', 328.4], ['ダート', 'd', 329.1]]],
-  ['阪神', true, [['芝・外回り', 't', 473.6], ['芝・内回り', 't', 356.5], ['ダート', 'd', 352.5]]],
+  ['京都', true, [['芝・外回り', 't', 403.7, 'outer'], ['芝・内回り', 't', 328.4, 'inner'], ['ダート', 'd', 329.1, 'inner']]],
+  ['阪神', true, [['芝・外回り', 't', 473.6, 'outer'], ['芝・内回り', 't', 356.5, 'inner'], ['ダート', 'd', 352.5, 'inner']]],
   ['小倉', true, [['芝', 't', 293.0], ['ダート', 'd', 291.3]]],
 ];
 // 地方競馬: [場名, 右回り, [[名前, 面, ゴール前の直線(m)]]]（参考値）
@@ -75,12 +75,46 @@ const NAR_VENUES = [
   ['帯広', true, [['ばんえい直線', 's', 200]]],
 ];
 const JRA_BAND = { t: '#bfe3b0', d: '#e6d3ab' };
+// 競馬場の形: コースの中心線（左回りで描き、右回りは左右を反転）。「M x0 y H x1」で始めて、ホームストレッチを左から右へ。home = [x0, x1, y]
+const ovalPath = (a, r) => `M ${800 - a} ${450 + r} H ${800 + a} A ${r} ${r} 0 0 0 ${800 + a} ${450 - r} H ${800 - a} A ${r} ${r} 0 0 0 ${800 - a} ${450 + r} Z`;
+const VENUE_SHAPES = {   // 特徴をとらえた模式図（実寸ではない）
+  '東京': { turf: { d: 'M 300 700 H 1150 C 1480 700 1480 200 1100 200 L 500 200 C 230 200 180 700 300 700 Z', home: [300, 1150, 700] } },
+  '中京': { turf: { d: 'M 350 700 H 1100 C 1360 700 1360 300 1100 300 L 520 300 C 250 300 240 700 350 700 Z', home: [350, 1100, 700] } },
+  '札幌': { turf: { d: ovalPath(240, 250), home: [560, 1040, 700] } },
+  // 中山: 外回りは1〜2コーナーで大きく外へふくらみ、向正面が短く、3〜4コーナーは内回りと共通
+  '中山': { outer: { d: 'M 420 700 H 980 C 1400 700 1480 170 1000 160 C 760 155 560 250 440 350 C 240 520 250 700 420 700 Z', home: [420, 980, 700] },
+            inner: { d: 'M 420 700 H 980 C 1200 700 1200 380 980 380 L 520 380 C 480 380 460 370 440 350 C 240 520 250 700 420 700 Z', home: [420, 980, 700] } },
+  // 京都: 外回りは3コーナー（坂）で外へ大きくふくらむ
+  '京都': { outer: { d: 'M 400 700 H 1100 C 1330 700 1330 320 1100 320 L 650 320 C 350 320 120 420 160 600 C 190 700 300 700 400 700 Z', home: [400, 1100, 700] },
+            inner: { d: 'M 400 700 H 1100 C 1330 700 1330 320 1100 320 L 650 320 C 420 320 300 420 300 560 C 300 680 350 700 400 700 Z', home: [400, 1100, 700] } },
+  // 阪神: 外回りは2コーナーから向正面が外へ大きくふくらみ、4コーナーで合流
+  '阪神': { outer: { d: 'M 400 700 H 1100 C 1330 700 1380 300 1150 230 C 900 150 600 160 450 230 C 200 330 250 700 400 700 Z', home: [400, 1100, 700] },
+            inner: { d: 'M 400 700 H 1100 C 1300 700 1300 380 1100 380 L 520 380 C 250 380 250 700 400 700 Z', home: [400, 1100, 700] } },
+  // 新潟: 外回りは3コーナーから外へ出て、長い直線へ
+  '新潟': { outer: { d: 'M 160 700 H 1200 C 1420 700 1420 360 1200 360 L 700 360 C 420 360 60 400 60 560 C 60 680 110 700 160 700 Z', home: [160, 1200, 700] },
+            inner: { d: 'M 480 700 H 1200 C 1420 700 1420 360 1200 360 L 700 360 C 520 360 330 420 330 540 C 330 660 400 700 480 700 Z', home: [480, 1200, 700] } },
+};
+const PATH_CACHE = {};
+function pathInfo(d) {   // 中心線の長さ・中心・上下の範囲（既定の並べ方と、ダートの縮小に使う）
+  if (PATH_CACHE[d]) return PATH_CACHE[d];
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'path'); el.setAttribute('d', d); const L = el.getTotalLength();
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (let i = 0; i < 120; i++) { const p = el.getPointAtLength(L * i / 120); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  return (PATH_CACHE[d] = { el, L, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, y0, y1 });
+}
+const DIRT_K = 0.78, W_TURF = 100, W_DIRT = 80;
 function jraCourses(venues = JRA_VENUES, gl = 'JRA') {
-  const o = { l: { name: '左回り（汎用）', kind: 'oval', cw: false, a: 380, r: 190, w: 120, label: gl, band: gl === 'JRA' ? undefined : JRA_BAND.d }, r: { name: '右回り（汎用）', kind: 'oval', cw: true, a: 380, r: 190, w: 120, label: gl, band: gl === 'JRA' ? undefined : JRA_BAND.d } };
-  for (const [v, cw, list] of venues) list.forEach(([nm, surf, D], i) => {
-    const key = v + i, name = v + ' ' + nm + '（' + (cw ? '右' : '左') + (surf === 's' ? '' : '回り') + '・直線' + (D % 1 ? D.toFixed(1) : D) + 'm）';
-    o[key] = surf === 's' ? { name: v + ' ' + nm, kind: 'straight', band: surf === 's' && gl !== 'JRA' ? JRA_BAND.d : JRA_BAND.t, D, grp: v, label: v + ' ' + nm } : { name, kind: 'oval', cw, a: Math.max(150, Math.round(0.7 * D)), r: 190, w: 120, band: JRA_BAND[surf], D, grp: v, label: v + ' ' + nm };
-  });
+  const gen = (D) => { const a = Math.max(150, Math.round(0.7 * D)), r = 190; return { turf: { d: ovalPath(a, r), home: [800 - a, 800 + a, 450 + r] } }; };
+  const gb = gl === 'JRA' ? JRA_BAND.t : JRA_BAND.d;
+  const o = { l: { name: '左回り（汎用）', kind: 'track', cw: false, shapes: gen(380 / 0.7), ref: 'turf', k: 1, w: W_TURF, band: gb, onlyDirt: gl !== 'JRA', label: gl }, r: { name: '右回り（汎用）', kind: 'track', cw: true, shapes: gen(380 / 0.7), ref: 'turf', k: 1, w: W_TURF, band: gb, onlyDirt: gl !== 'JRA', label: gl } };
+  for (const [v, cw, list] of venues) {
+    const shapes = VENUE_SHAPES[v] || gen(list[0][2]), dirt = list.find((e) => e[1] === 'd'), dirtRef = dirt ? (dirt[3] || 'turf') : null, onlyDirt = list.every((e) => e[1] !== 't');
+    list.forEach(([nm, surf, D, ref], i) => {
+      const key = v + i, name = v + ' ' + nm + '（' + (cw ? '右' : '左') + (surf === 's' ? '' : '回り') + '・直線' + (D % 1 ? D.toFixed(1) : D) + 'm）';
+      if (surf === 's') { o[key] = { name: v + ' ' + nm, kind: 'straight', band: gl !== 'JRA' ? JRA_BAND.d : JRA_BAND.t, D, grp: v, label: v + ' ' + nm }; return; }
+      const isD = surf === 'd' && !onlyDirt;
+      o[key] = { name, kind: 'track', cw, shapes, ref: ref || 'turf', k: isD ? DIRT_K : 1, w: isD ? W_DIRT : W_TURF, band: JRA_BAND[surf], dirtRef: onlyDirt ? null : dirtRef, onlyDirt, D, grp: v, label: v + ' ' + nm };
+    });
+  }
   return o;
 }
 // 種類とコース形態
@@ -117,6 +151,26 @@ const T = (x, y, t, o = {}) => `<text x="${x}" y="${y}" font-size="${o.s || 30}"
 
 function courseSVG() {
   const c = C(), m = M();
+  if (c.kind === 'track') {
+    const mir = (x) => (c.cw ? 1600 - x : x), tf = c.cw ? 'translate(1600 0) scale(-1 1)' : '', keys = Object.keys(c.shapes), outer = c.shapes[keys[0]], oi = pathInfo(outer.d);
+    const sc = (k, info) => (k < 1 ? `transform="translate(${info.cx} ${info.cy}) scale(${k}) translate(${-info.cx} ${-info.cy})"` : '');
+    // 帯（コース）: 選んでいないものは薄く、選んだものを最後に描く
+    const bands = keys.map((k) => ({ d: c.shapes[k].d, w: W_TURF, k: 1, col: c.onlyDirt ? JRA_BAND.d : JRA_BAND.t, sel: c.k === 1 && c.ref === k }));
+    if (c.dirtRef) bands.push({ d: c.shapes[c.dirtRef].d, w: W_DIRT, k: DIRT_K, col: JRA_BAND.d, sel: c.k < 1 });
+    bands.sort((a, b) => a.sel - b.sel);
+    let s = `<g transform="${tf}"><path d="${outer.d}" fill="#d9efcf" stroke="none"/>`;
+    for (const b of bands) { const info = pathInfo(b.d), t = sc(b.k, info); s += `<g opacity="${b.sel ? 1 : 0.38}"><path d="${b.d}" fill="none" stroke="#8fa0ad" stroke-width="${b.w + 6}" ${t}/><path d="${b.d}" fill="none" stroke="${b.col}" stroke-width="${b.w}" ${t}/></g>`; }
+    // ゴール（選んだコースの、ホームストレッチの右寄り）
+    const sh = c.shapes[c.ref], info = pathInfo(sh.d), k = c.k, gx = info.cx + (sh.home[1] - 90 - info.cx) * k, gy = info.cy + (sh.home[2] - info.cy) * k, x0 = info.cx + (sh.home[0] - info.cx) * k;
+    s += `<line x1="${gx}" y1="${gy - c.w / 2}" x2="${gx}" y2="${gy + c.w / 2}" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>`;
+    const det = S.detail && c.D, ly = gy + c.w / 2 + 36;
+    if (det) s += `<g stroke="#d6336c" stroke-width="5"><line x1="${x0}" y1="${ly}" x2="${gx}" y2="${ly}"/><line x1="${x0}" y1="${ly - 14}" x2="${x0}" y2="${ly + 14}"/><line x1="${gx}" y1="${ly - 14}" x2="${gx}" y2="${ly + 14}"/></g>`;
+    s += '</g>';
+    if (det) s += T(mir((x0 + gx) / 2), ly + 46, 'ゴール前の直線 ' + (c.D % 1 ? c.D.toFixed(1) : c.D) + 'm', { s: 32, f: '#d6336c' }) + T(mir(gx), ly + 86, 'ゴール', { s: 28 });
+    else s += T(mir(gx), gy + c.w / 2 + 40, 'ゴール', { s: 30 });
+    s += T(800, Math.max(oi.y1 + W_TURF / 2 + 86, det ? ly + 124 : 0), 'スタンド', { s: 26, f: '#9aa8b3' }) + T(800, oi.y0 - W_TURF / 2 - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(mir(oi.cx), oi.cy + 10, c.label, { s: 40, f: '#9fb0bd' });
+    return s;
+  }
   if (c.kind === 'oval') {
     const mir = (x) => (c.cw ? 1600 - x : x), gx = mir(800 + 0.35 * c.a), by = 450 + c.r + c.w / 2, ty = 450 - c.r - c.w / 2;
     const outer = stadium(c.a, c.r + c.w / 2), inner = stadium(c.a, c.r - c.w / 2), tf = c.cw ? 'translate(1600 0) scale(-1 1)' : '';
@@ -140,6 +194,13 @@ function defaultPos(num) {
   const n = S.n, i = num - 1, c = C();
   if (S.view === 'lane') { const rows = M().lanes.length, row = M().lanes.length === 6 ? i : i % rows; return { x: 88 - 76 * (n > 1 ? i / (n - 1) : 0), y: ((row + 0.5) / rows) * 100 }; }
   if (c.kind === 'oval') { const p = ovalPoint(c, 1.35 * c.a + 20 - Math.floor(i / 2) * 85, ((i % 2) - 0.5) * c.w * 0.7); return { x: p.x / 16, y: p.y / 9 }; }
+  if (c.kind === 'track') {
+    const sh = c.shapes[c.ref], info = pathInfo(sh.d), k = c.k, L = info.L, sg = sh.home[1] - 90 - sh.home[0];
+    let sp = sg - 10 - Math.floor(i / 2) * 85 / k; sp = ((sp % L) + L) % L;
+    const p = info.el.getPointAtLength(sp), q = info.el.getPointAtLength((sp + 2) % L), tx = q.x - p.x, ty = q.y - p.y, tl = Math.hypot(tx, ty) || 1, ro = ((i % 2) - 0.5) * W_TURF * 0.7;
+    let x = p.x - ty / tl * ro, y = p.y + tx / tl * ro; x = info.cx + (x - info.cx) * k; y = info.cy + (y - info.cy) * k; if (c.cw) x = 1600 - x;
+    return { x: x / 16, y: y / 9 };
+  }
   if (c.kind === 'straight') return { x: (170 + Math.floor(i / 3) * 100) / 16, y: (365 + (i % 3) * 85) / 9 };
   if (c.kind === 'm1') return { x: (i % 2 ? 17 : 21), y: (240 + i * 96) / 9 };
   return { x: (230 + (i % 2) * 95) / 16, y: (540 + Math.floor(i / 2) * 80) / 9 };
