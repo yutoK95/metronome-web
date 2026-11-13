@@ -162,7 +162,9 @@ function courseSVG() {
     if (c.dirtRef) bands.push({ d: c.shapes[c.dirtRef].d, w: W_DIRT, k: DIRT_K, col: JRA_BAND.d, sel: c.k < 1 });
     bands.sort((a, b) => a.sel - b.sel);
     let s = `<g transform="${tf}"><path d="${outer.d}" fill="#d9efcf" stroke="none"/>`;
-    for (const b of bands) { const info = pathInfo(b.d), t = sc(b.k, info); s += `<g opacity="${b.sel ? 1 : 0.38}"><path d="${b.d}" fill="none" stroke="#8fa0ad" stroke-width="${b.w + 6}" ${t}/><path d="${b.d}" fill="none" stroke="${b.col}" stroke-width="${b.w}" ${t}/></g>`; }
+    for (const b of bands) { const info = pathInfo(b.d), t = sc(b.k, info); s += b.sel
+      ? `<path d="${b.d}" fill="none" stroke="#111" stroke-width="${b.w + 10}" ${t}/><path d="${b.d}" fill="none" stroke="${b.col}" stroke-width="${b.w}" ${t}/>`   // 選んだコース: 黒い枠線
+      : `<g opacity=".45"><path d="${b.d}" fill="none" stroke="#9aa8b3" stroke-width="${b.w + 6}" ${t}/><path d="${b.d}" fill="none" stroke="#e9eef0" stroke-width="${b.w}" ${t}/></g>`; }   // ほかのコース: 灰色で薄く
     // ゴール（選んだコースの、ホームストレッチの右寄り）
     const sh = c.shapes[c.ref], info = pathInfo(sh.d), k = c.k, gx = info.cx + (sh.home[1] - 90 - info.cx) * k, gy = info.cy + (sh.home[2] - info.cy) * k, x0 = info.cx + (sh.home[0] - info.cx) * k;
     // 距離が選ばれていたら、スタート地点と走る道のりを描く（1周の長さから、ゴールより手前へさかのぼる）
@@ -170,18 +172,18 @@ function courseSVG() {
     if (dist && c.lap) {
       const full = dist * L / c.lap, run = Math.min(L, full), s0 = (((sg - full) % L) + L) % L, t = sc(k, info);
       const dash = run >= L - 1 ? '' : (s0 < sg ? `stroke-dasharray="${run} ${L}" stroke-dashoffset="${-s0}"` : `stroke-dasharray="${sg} ${s0 - sg} ${L - s0}"`);
-      s += `<path d="${sh.d}" fill="none" stroke="#4a86c5" stroke-width="${c.w * 0.9}" opacity=".3" ${dash} ${t}/>`;
+      s += `<path d="${sh.d}" fill="none" stroke="#ffb020" stroke-width="${c.w * 0.72}" opacity=".95" ${dash} ${t}/>`;   // 走る道のり: 橙色
       const p = info.el.getPointAtLength(s0), q = info.el.getPointAtLength((s0 + 2) % L), tx = q.x - p.x, ty = q.y - p.y, tl = Math.hypot(tx, ty) || 1, nx = -ty / tl, ny = tx / tl, hw = W_TURF / 2 + 4;
       const P = (x, y) => [info.cx + (x - info.cx) * k, info.cy + (y - info.cy) * k];
       const [ax, ay] = P(p.x + nx * hw, p.y + ny * hw), [bx, by] = P(p.x - nx * hw, p.y - ny * hw), [lx, ly2] = P(p.x + nx * (hw + 92), p.y + ny * (hw + 92));
-      s += `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#d6336c" stroke-width="8"/>`;
+      s += `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#111" stroke-width="12"/><line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#fff" stroke-width="4" stroke-dasharray="8 8"/>`;
       st = { x: mir(lx), y: ly2 };
     }
     s += `<line x1="${gx}" y1="${gy - c.w / 2}" x2="${gx}" y2="${gy + c.w / 2}" stroke="#222" stroke-width="7" stroke-dasharray="14 10"/>`;
     const det = S.detail && c.D, ly = gy + c.w / 2 + 36;
     if (det) s += `<g stroke="#d6336c" stroke-width="5"><line x1="${x0}" y1="${ly}" x2="${gx}" y2="${ly}"/><line x1="${x0}" y1="${ly - 14}" x2="${x0}" y2="${ly + 14}"/><line x1="${gx}" y1="${ly - 14}" x2="${gx}" y2="${ly + 14}"/></g>`;
     s += '</g>';
-    if (st) s += T(st.x, st.y + 10, 'スタート ' + dist + 'm', { s: 30, f: '#d6336c' });
+    if (st) s += T(st.x, st.y + 10, 'スタート ' + dist + 'm', { s: 32, f: '#111' });
     if (det) s += T(mir((x0 + gx) / 2), ly + 46, 'ゴール前の直線 ' + (c.D % 1 ? c.D.toFixed(1) : c.D) + 'm', { s: 32, f: '#d6336c' }) + T(mir(gx), ly + 86, 'ゴール', { s: 28 });
     else s += T(mir(gx), gy + c.w / 2 + 40, 'ゴール', { s: 30 });
     { const sy = Math.max(oi.y1 + W_TURF / 2 + 86, det ? ly + 124 : 0); if (sy < 885) s += T(800, sy, 'スタンド', { s: 26, f: '#9aa8b3' }); }
