@@ -168,7 +168,8 @@ function courseSVG() {
     s += '</g>';
     if (det) s += T(mir((x0 + gx) / 2), ly + 46, 'ゴール前の直線 ' + (c.D % 1 ? c.D.toFixed(1) : c.D) + 'm', { s: 32, f: '#d6336c' }) + T(mir(gx), ly + 86, 'ゴール', { s: 28 });
     else s += T(mir(gx), gy + c.w / 2 + 40, 'ゴール', { s: 30 });
-    s += T(800, Math.max(oi.y1 + W_TURF / 2 + 86, det ? ly + 124 : 0), 'スタンド', { s: 26, f: '#9aa8b3' }) + T(800, oi.y0 - W_TURF / 2 - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(mir(oi.cx), oi.cy + 10, c.label, { s: 40, f: '#9fb0bd' });
+    { const sy = Math.max(oi.y1 + W_TURF / 2 + 86, det ? ly + 124 : 0); if (sy < 885) s += T(800, sy, 'スタンド', { s: 26, f: '#9aa8b3' }); }
+    s += '' + T(800, oi.y0 - W_TURF / 2 - 22, c.cw ? '進行方向 →' : '← 進行方向', { s: 28 }) + T(mir(oi.cx), oi.cy + 10, c.label, { s: 40, f: '#9fb0bd' });
     return s;
   }
   if (c.kind === 'oval') {
